@@ -1,0 +1,308 @@
+{
+  "all_passed": true,
+  "checks": {
+    "expected_vs_actual_decision": true,
+    "no_silent_accept_on_missing_critical_info": true,
+    "ran_all_10_demo_scenarios": true,
+    "refer_decline_citations_exist": true
+  },
+  "expected_scenario_count": 10,
+  "failed": 0,
+  "generated_at": "2026-04-30T19:22:05.067084+00:00",
+  "passed": 10,
+  "scenario_count": 10,
+  "scenarios": [
+    {
+      "actual_decision": "ACCEPT",
+      "actual_status": "completed",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 5,
+      "citations_required": false,
+      "critical_missing_fields": [],
+      "description": "Typical single-family home with no risk factors, should quote eligible",
+      "expected_decision": "ACCEPT",
+      "expected_status": null,
+      "failures": [],
+      "index": 1,
+      "name": "Scenario 1: Standard Quote - Low Risk",
+      "passed": true,
+      "quote_id": "Q-2026-478BFB",
+      "required_questions": [],
+      "review_reason_codes": [],
+      "run_id": "50047748-efb1-41b4-8289-0a4bd3b129be"
+    },
+    {
+      "actual_decision": "REFER",
+      "actual_status": "waiting_for_info",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 3,
+      "citations_required": true,
+      "critical_missing_fields": [],
+      "description": "Property in high wildfire zone should trigger referral",
+      "expected_decision": "REFER",
+      "expected_status": null,
+      "failures": [],
+      "index": 2,
+      "name": "Scenario 2: Wildfire High Risk - Refer",
+      "passed": true,
+      "quote_id": "Q-2026-0596C1",
+      "required_questions": [
+        {
+          "answer_key": "risk.wildfire_mitigation_evidence",
+          "context": {
+            "property_address": "456 Oak Ave, Sacramento, CA 95814",
+            "wildfire_band": "High"
+          },
+          "field_path": "risk.wildfire_mitigation_evidence",
+          "question": "Is defensible-space or wildfire mitigation evidence documented for this property?",
+          "question_id": "wildfire_mitigation_evidence",
+          "question_text": "Is defensible-space or wildfire mitigation evidence documented for this property?",
+          "question_type": "boolean",
+          "required": true
+        }
+      ],
+      "review_reason_codes": [
+        "WILDFIRE_MITIGATION_EVIDENCE"
+      ],
+      "run_id": "14033893-8f00-403d-b9fc-516217762064"
+    },
+    {
+      "actual_decision": "REFER",
+      "actual_status": "waiting_for_info",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 3,
+      "citations_required": true,
+      "critical_missing_fields": [
+        "risk.roof_age_years"
+      ],
+      "description": "Missing roof age should trigger need more info workflow",
+      "expected_decision": "REFER",
+      "expected_status": "waiting_for_info",
+      "failures": [],
+      "index": 3,
+      "name": "Scenario 3: Missing Roof Age - Need Info",
+      "passed": true,
+      "quote_id": "Q-2026-2B5AF9",
+      "required_questions": [
+        {
+          "answer_key": "risk.roof_age_years",
+          "field_path": "risk.roof_age_years",
+          "question": "What is the roof age in years?",
+          "question_id": "roof_age_years",
+          "question_text": "What is the roof age in years?",
+          "question_type": "numeric",
+          "required": true
+        }
+      ],
+      "review_reason_codes": [
+        "ROOF_AGE_YEARS"
+      ],
+      "run_id": "b82d0cb0-6c10-422c-84e1-f23c1b726eb7"
+    },
+    {
+      "actual_decision": "REFER",
+      "actual_status": "pending_review",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 5,
+      "citations_required": true,
+      "critical_missing_fields": [],
+      "description": "Property built before 1940 should trigger referral for additional review",
+      "expected_decision": "REFER",
+      "expected_status": null,
+      "failures": [],
+      "index": 4,
+      "name": "Scenario 4: Old Construction - Refer",
+      "passed": true,
+      "quote_id": "Q-2026-62C1A7",
+      "required_questions": [],
+      "review_reason_codes": [
+        "OLD_CONSTRUCTION"
+      ],
+      "run_id": "acebf507-1bb1-4d8c-837e-504eb86459c5"
+    },
+    {
+      "actual_decision": "ACCEPT",
+      "actual_status": "completed",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 5,
+      "citations_required": false,
+      "critical_missing_fields": [],
+      "description": "Condominium should be eligible with appropriate coverage",
+      "expected_decision": "ACCEPT",
+      "expected_status": null,
+      "failures": [],
+      "index": 5,
+      "name": "Scenario 5: Condo - Quote Eligible",
+      "passed": true,
+      "quote_id": "Q-2026-9FA47A",
+      "required_questions": [],
+      "review_reason_codes": [],
+      "run_id": "a2e58fad-1a68-432c-9e05-4b7f8e644057"
+    },
+    {
+      "actual_decision": "REFER",
+      "actual_status": "pending_review",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 5,
+      "citations_required": true,
+      "critical_missing_fields": [],
+      "description": "High flood risk should trigger referral",
+      "expected_decision": "REFER",
+      "expected_status": null,
+      "failures": [],
+      "index": 6,
+      "name": "Scenario 6: Flood Risk - Refer",
+      "passed": true,
+      "quote_id": "Q-2026-F89393",
+      "required_questions": [],
+      "review_reason_codes": [
+        "FLOOD_SFHA"
+      ],
+      "run_id": "fcc3d160-aaf5-41c0-bea4-dc82bb11af16"
+    },
+    {
+      "actual_decision": "ACCEPT",
+      "actual_status": "completed",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 5,
+      "citations_required": false,
+      "critical_missing_fields": [],
+      "description": "Townhouse should be eligible with standard coverage",
+      "expected_decision": "ACCEPT",
+      "expected_status": null,
+      "failures": [],
+      "index": 7,
+      "name": "Scenario 7: Townhouse - Quote Eligible",
+      "passed": true,
+      "quote_id": "Q-2026-CCC69F",
+      "required_questions": [],
+      "review_reason_codes": [],
+      "run_id": "0b253ecd-ba48-46e5-83bf-adf3faa2b44a"
+    },
+    {
+      "actual_decision": "REFER",
+      "actual_status": "waiting_for_info",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 3,
+      "citations_required": true,
+      "critical_missing_fields": [],
+      "description": "Multiple claims in past 5 years should trigger referral",
+      "expected_decision": "REFER",
+      "expected_status": null,
+      "failures": [],
+      "index": 8,
+      "name": "Scenario 8: Claims History - Refer",
+      "passed": true,
+      "quote_id": "Q-2026-58AF67",
+      "required_questions": [
+        {
+          "answer_key": "risk.wildfire_mitigation_evidence",
+          "context": {
+            "property_address": "2000 Valley Rd, Santa Rosa, CA 95401",
+            "wildfire_band": "High"
+          },
+          "field_path": "risk.wildfire_mitigation_evidence",
+          "question": "Is defensible-space or wildfire mitigation evidence documented for this property?",
+          "question_id": "wildfire_mitigation_evidence",
+          "question_text": "Is defensible-space or wildfire mitigation evidence documented for this property?",
+          "question_type": "boolean",
+          "required": true
+        }
+      ],
+      "review_reason_codes": [
+        "WILDFIRE_MITIGATION_EVIDENCE"
+      ],
+      "run_id": "95a5b5df-e92e-4324-b6fc-da6486b31ac3"
+    },
+    {
+      "actual_decision": "ACCEPT",
+      "actual_status": "completed",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 5,
+      "citations_required": false,
+      "critical_missing_fields": [],
+      "description": "High value home with no risk factors should be eligible",
+      "expected_decision": "ACCEPT",
+      "expected_status": null,
+      "failures": [],
+      "index": 9,
+      "name": "Scenario 9: High Coverage - Quote Eligible",
+      "passed": true,
+      "quote_id": "Q-2026-DE745F",
+      "required_questions": [],
+      "review_reason_codes": [],
+      "run_id": "0618afed-834b-401e-ba9c-0c5b54f323e7"
+    },
+    {
+      "actual_decision": "REFER",
+      "actual_status": "pending_review",
+      "checks": {
+        "citations_present_when_required": true,
+        "decision_matches_expected": true,
+        "no_silent_accept_on_missing_critical_info": true,
+        "status_matches_expected": true
+      },
+      "citation_count": 5,
+      "citations_required": true,
+      "critical_missing_fields": [],
+      "description": "Tenant-occupied property should trigger referral",
+      "expected_decision": "REFER",
+      "expected_status": null,
+      "failures": [],
+      "index": 10,
+      "name": "Scenario 10: Tenant Occupied - Refer",
+      "passed": true,
+      "quote_id": "Q-2026-997BF7",
+      "required_questions": [],
+      "review_reason_codes": [
+        "OCCUPANCY_REVIEW"
+      ],
+      "run_id": "fb0badf3-befe-4a65-8201-664f2cf06b43"
+    }
+  ]
+}

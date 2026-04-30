@@ -291,6 +291,7 @@ class PhaseAWorkflow:
         workflow_state.current_node = "waiting_for_info"
         workflow_state.required_questions = questions
         workflow_state.missing_info = [q.get("question_id", q.get("field_path", "missing_info")) for q in questions]
+        citations = self._retrieve_missing_info_citations(questions)
 
         decision_packet = self.decision_packager.package(
             {
@@ -301,12 +302,13 @@ class PhaseAWorkflow:
                         "code": q.get("question_id", "MISSING_INFO").upper(),
                         "severity": "medium",
                         "because": q.get("question", q.get("question_text", "Additional information is required.")),
-                        "citations": [],
+                        "citations": citations,
                     }
                     for q in questions
                 ],
                 "required_questions": questions,
-                "citations_used": [],
+                "citations": citations,
+                "citations_used": citations,
                 "confidence": 0.7,
                 "reasoning": "Additional information is required before underwriting can continue.",
             },
@@ -331,6 +333,28 @@ class PhaseAWorkflow:
         })
 
         return workflow_state
+
+    def _retrieve_missing_info_citations(self, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        query_parts = [
+            "missing info required fields evidence policy targeted questions",
+            " ".join(
+                str(question.get(key, ""))
+                for question in questions
+                for key in ("question_id", "field_path", "question", "question_text")
+            ),
+        ]
+        chunks = self.rag_engine.retrieve(" ".join(query_parts), n_results=3)
+        return [
+            {
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "doc_version": chunk.doc_version,
+                "section": chunk.section,
+                "relevance_score": chunk.relevance_score,
+                "excerpt": chunk.text[:240],
+            }
+            for chunk in chunks
+        ]
 
     def _convert_to_quote_submission(self, ho3_data: Dict[str, Any]) -> QuoteSubmission:
         """
