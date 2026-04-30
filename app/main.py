@@ -26,9 +26,6 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],  # Specific headers instead of wildcard
 )
 
-# Mount static files
-# Note: static files and canonical router removed during cleanup
-
 
 # Request/Response models
 class QuoteRunRequest(BaseModel):

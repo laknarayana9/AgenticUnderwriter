@@ -103,7 +103,6 @@ class RetrievalChunk(BaseModel):
     effective_date: Optional[str] = Field(None, description="Effective date of the guideline")
 
 
-# Phase A Enhancement: Decision Packet
 class DecisionPacket(BaseModel):
     """Final decision packet suitable for producer-facing explanation, underwriter review, and audit"""
     decision: DecisionType
@@ -183,7 +182,6 @@ class WorkflowState(BaseModel):
     additional_answers: Dict[str, Any] = Field(default_factory=dict)
     citation_guardrail_triggered: bool = False
 
-    # Phase A Enhancement: Extended WorkflowState
     run_id: Optional[str] = Field(None, description="Unique run identifier")
     quote_id: Optional[str] = Field(None, description="Quote identifier")
     status: Literal["processing", "waiting_for_info", "pending_review", "completed", "failed"] = Field("processing", description="Current status")
