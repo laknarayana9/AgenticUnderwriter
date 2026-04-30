@@ -3,7 +3,8 @@ Phase A Workflow using 7 Specialized Agents
 Implements the canonical HO3 underwriting workflow with the new agent contracts.
 """
 import uuid
-from typing import Dict, Any
+from copy import deepcopy
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 import time
 
@@ -52,14 +53,57 @@ class PhaseAWorkflow:
         """
         Run the Phase A workflow with a raw HO3 submission.
         """
+        return self._run(submission_raw)
+
+    def resume(self, previous_state: WorkflowState, additional_answers: Dict[str, Any]) -> WorkflowState:
+        """
+        Resume a paused workflow using answers supplied by an underwriter or agent.
+        """
+        if previous_state.status != "waiting_for_info":
+            raise ValueError("Only runs waiting for information can be resumed")
+
+        updated_submission, applied_answers = self._apply_followup_answers(
+            previous_state.submission_raw or {},
+            previous_state.required_questions,
+            additional_answers,
+        )
+        merged_answers = dict(previous_state.additional_answers)
+        merged_answers.update(applied_answers)
+        prior_events = list(previous_state.events)
+        prior_events.append({
+            "event": "missing_info_answers_received",
+            "timestamp": datetime.now().isoformat(),
+            "answers": applied_answers,
+            "answered_fields": sorted(applied_answers.keys()),
+        })
+
+        return self._run(
+            updated_submission,
+            run_id=previous_state.run_id,
+            quote_id=previous_state.quote_id,
+            prior_events=prior_events,
+            additional_answers=merged_answers,
+        )
+
+    def _run(
+        self,
+        submission_raw: Dict[str, Any],
+        run_id: Optional[str] = None,
+        quote_id: Optional[str] = None,
+        prior_events: Optional[List[Dict[str, Any]]] = None,
+        additional_answers: Optional[Dict[str, Any]] = None,
+    ) -> WorkflowState:
+        """
+        Run or resume the Phase A workflow with a raw HO3 submission.
+        """
         submission_raw = self._ensure_ho3_raw(submission_raw)
         tracer = get_tracer("phase_a_workflow")
         workflow_start = time.time()
         
         with tracer.start_as_current_span("phase_a_workflow_execution") as span:
             # Generate run ID
-            run_id = str(uuid.uuid4())
-            quote_id = f"Q-2026-{uuid.uuid4().hex[:6].upper()}"
+            run_id = run_id or str(uuid.uuid4())
+            quote_id = quote_id or f"Q-2026-{uuid.uuid4().hex[:6].upper()}"
 
             span.set_attribute("run_id", run_id)
             span.set_attribute("quote_id", quote_id)
@@ -74,7 +118,9 @@ class PhaseAWorkflow:
                 status="processing",
                 quote_submission=quote_submission,
                 submission_raw=submission_raw,
-                current_node="start"
+                current_node="start",
+                additional_answers=additional_answers or {},
+                events=prior_events or []
             )
 
             try:
@@ -82,47 +128,22 @@ class PhaseAWorkflow:
                 with tracer.start_as_current_span("intake_normalization"):
                     workflow_state.current_node = "intake_normalization"
                     normalization_result = self.intake_normalizer.normalize(submission_raw)
-                    workflow_state.submission_canonical = HO3Submission(**submission_raw)
                     workflow_state.missing_info = normalization_result["missing_info"]
+                    workflow_state.required_questions = normalization_result["questions"]
 
                 # Step 2: Planning/Routing
                 with tracer.start_as_current_span("planner_routing"):
                     workflow_state.current_node = "planner"
                     routing_decision = self.planner_router.route(
-                        workflow_state.submission_canonical,
+                        submission_raw,
                         workflow_state.missing_info
                     )
 
                 # Check if waiting for info
                 if routing_decision["route"] == "waiting_for_info":
-                    workflow_state.status = "waiting_for_info"
-                    # Create decision packet for missing info
-                    questions = normalization_result["questions"]
-                    decision_packet = self.decision_packager.package(
-                        {
-                            "preliminary_decision": "REFER",
-                            "eligibility_score": 0.5,
-                            "risk_factors": [],
-                            "required_questions": questions,
-                            "citations_used": [],
-                            "confidence": 0.7
-                        },
-                        None,  # No rating yet
-                        []
-                    )
-                    workflow_state.decision_packet = decision_packet
-                    
-                    # Create HITL task for missing info
-                    question_texts = [q.get("question", str(q)) for q in questions]
-                    self.hitl_workflow.create_hitl_task(
-                        run_id=run_id,
-                        task_type="request_info",
-                        description=f"Additional information required: {', '.join(question_texts)}",
-                        priority="high",
-                        metadata={"decision": "REFER", "questions": questions}
-                    )
-                    
-                    return workflow_state
+                    return self._pause_for_missing_info(workflow_state, normalization_result["questions"])
+
+                workflow_state.submission_canonical = HO3Submission(**submission_raw)
 
                 # Check for hard decline or refer candidates - create decision packets
                 if routing_decision["route"] in ["hard_decline_candidate", "hard_refer"]:
@@ -161,6 +182,15 @@ class PhaseAWorkflow:
                         workflow_state.submission_canonical
                     )
                     workflow_state.enrichment = enrichment_data
+
+                followup_questions = self._detect_contextual_missing_info(
+                    workflow_state.submission_canonical,
+                    enrichment_data,
+                )
+                if followup_questions:
+                    workflow_state.missing_info = [q["question_id"] for q in followup_questions]
+                    workflow_state.required_questions = followup_questions
+                    return self._pause_for_missing_info(workflow_state, followup_questions)
 
                 # Step 4: Retrieval
                 with tracer.start_as_current_span("retrieval"):
@@ -256,6 +286,52 @@ class PhaseAWorkflow:
                 span.set_attribute("error", str(e))
                 raise
 
+    def _pause_for_missing_info(self, workflow_state: WorkflowState, questions: List[Dict[str, Any]]) -> WorkflowState:
+        workflow_state.status = "waiting_for_info"
+        workflow_state.current_node = "waiting_for_info"
+        workflow_state.required_questions = questions
+        workflow_state.missing_info = [q.get("question_id", q.get("field_path", "missing_info")) for q in questions]
+
+        decision_packet = self.decision_packager.package(
+            {
+                "preliminary_decision": "REFER",
+                "eligibility_score": 0.5,
+                "risk_factors": [
+                    {
+                        "code": q.get("question_id", "MISSING_INFO").upper(),
+                        "severity": "medium",
+                        "because": q.get("question", q.get("question_text", "Additional information is required.")),
+                        "citations": [],
+                    }
+                    for q in questions
+                ],
+                "required_questions": questions,
+                "citations_used": [],
+                "confidence": 0.7,
+                "reasoning": "Additional information is required before underwriting can continue.",
+            },
+            None,
+            []
+        )
+        workflow_state.decision_packet = decision_packet
+
+        question_texts = [q.get("question", str(q)) for q in questions]
+        self.hitl_workflow.create_hitl_task(
+            run_id=workflow_state.run_id,
+            task_type="request_info",
+            description=f"Additional information required: {', '.join(question_texts)}",
+            priority="high",
+            metadata={"decision": "REFER", "questions": questions}
+        )
+        workflow_state.events.append({
+            "event": "workflow_paused_for_missing_info",
+            "timestamp": datetime.now().isoformat(),
+            "missing_info": workflow_state.missing_info,
+            "questions": questions,
+        })
+
+        return workflow_state
+
     def _convert_to_quote_submission(self, ho3_data: Dict[str, Any]) -> QuoteSubmission:
         """
         Convert HO3 submission to QuoteSubmission for backward compatibility.
@@ -303,6 +379,103 @@ class PhaseAWorkflow:
                 "deductible": 1000
             }
         }
+
+    def _detect_contextual_missing_info(
+        self,
+        submission: HO3Submission,
+        enrichment: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Ask for information that only becomes required after enrichment."""
+        hazard_profile = enrichment.get("hazard_profile", {})
+        questions = []
+
+        if (
+            hazard_profile.get("wildfire_band") in {"High", "Severe"}
+            and submission.risk.wildfire_mitigation_evidence is None
+        ):
+            questions.append({
+                "question_id": "wildfire_mitigation_evidence",
+                "field_path": "risk.wildfire_mitigation_evidence",
+                "answer_key": "risk.wildfire_mitigation_evidence",
+                "question": "Is defensible-space or wildfire mitigation evidence documented for this property?",
+                "question_text": "Is defensible-space or wildfire mitigation evidence documented for this property?",
+                "question_type": "boolean",
+                "required": True,
+                "context": {
+                    "wildfire_band": hazard_profile.get("wildfire_band"),
+                    "property_address": submission.risk.property_address,
+                },
+            })
+
+        return questions
+
+    def _apply_followup_answers(
+        self,
+        submission_raw: Dict[str, Any],
+        questions: List[Dict[str, Any]],
+        answers: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        updated_submission = deepcopy(submission_raw)
+        applied_answers: Dict[str, Any] = {}
+        question_paths = {
+            question.get("question_id"): question.get("field_path")
+            for question in questions
+            if question.get("question_id") and question.get("field_path")
+        }
+        question_paths.update({
+            question.get("answer_key"): question.get("field_path")
+            for question in questions
+            if question.get("answer_key") and question.get("field_path")
+        })
+        fallback_paths = {
+            "applicant_name": "applicant.full_name",
+            "full_name": "applicant.full_name",
+            "property_address": "risk.property_address",
+            "occupancy": "risk.occupancy",
+            "roof_age_years": "risk.roof_age_years",
+            "wildfire_mitigation_evidence": "risk.wildfire_mitigation_evidence",
+            "mitigation_notes": "risk.mitigation_notes",
+        }
+
+        for key, value in answers.items():
+            field_path = question_paths.get(key) or fallback_paths.get(key) or (key if "." in key else None)
+            if not field_path:
+                continue
+            coerced_value = self._coerce_followup_answer(field_path, value)
+            self._set_nested_value(updated_submission, field_path, coerced_value)
+            applied_answers[field_path] = coerced_value
+
+        unanswered = [
+            question.get("field_path")
+            for question in questions
+            if question.get("required") and question.get("field_path") not in applied_answers
+        ]
+        if unanswered:
+            raise ValueError(f"Missing answers for required fields: {', '.join(unanswered)}")
+
+        return updated_submission, applied_answers
+
+    def _coerce_followup_answer(self, field_path: str, value: Any) -> Any:
+        if field_path.endswith("roof_age_years") and value is not None:
+            return int(value)
+        if field_path.endswith("wildfire_mitigation_evidence"):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"yes", "y", "true", "1", "documented", "provided"}:
+                    return True
+                if normalized in {"no", "n", "false", "0", "missing", "not provided"}:
+                    return False
+            return bool(value)
+        return value
+
+    def _set_nested_value(self, payload: Dict[str, Any], field_path: str, value: Any) -> None:
+        current = payload
+        parts = field_path.split(".")
+        for part in parts[:-1]:
+            current = current.setdefault(part, {})
+        current[parts[-1]] = value
 
     def _create_need_info_decision(self, questions: list) -> Dict[str, Any]:
         """Create a decision for missing information."""

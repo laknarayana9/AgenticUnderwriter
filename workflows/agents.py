@@ -33,19 +33,47 @@ class IntakeNormalizerAgent(BaseAgent):
         logger.info("Normalizing submission data")
         missing_info = []
         questions = []
+        risk = submission_data.get('risk', {})
+        applicant = submission_data.get('applicant', {})
         
         # Check for missing required fields
-        if not submission_data.get('applicant', {}).get('full_name'):
+        if _is_missing_or_uncertain(applicant.get('full_name')):
             missing_info.append('applicant_name')
-            questions.append({"question": "What is the applicant's full name?"})
+            questions.append(_question(
+                "applicant_name",
+                "applicant.full_name",
+                "What is the applicant's full legal name?",
+                "text",
+            ))
         
-        if not submission_data.get('risk', {}).get('property_address'):
+        if _is_missing_or_uncertain(risk.get('property_address')):
             missing_info.append('property_address')
-            questions.append({"question": "What is the property address?"})
+            questions.append(_question(
+                "property_address",
+                "risk.property_address",
+                "What is the full property address?",
+                "text",
+            ))
 
-        if submission_data.get('risk', {}).get('roof_age_years') is None:
+        occupancy = risk.get('occupancy')
+        if occupancy not in {"owner_occupied_primary", "owner_occupied_secondary", "tenant_occupied", "vacant"}:
+            missing_info.append('occupancy')
+            questions.append(_question(
+                "occupancy",
+                "risk.occupancy",
+                "What is the property's occupancy?",
+                "choice",
+                options=["owner_occupied_primary", "owner_occupied_secondary", "tenant_occupied", "vacant"],
+            ))
+
+        if _is_missing_or_uncertain(risk.get('roof_age_years')):
             missing_info.append('roof_age_years')
-            questions.append({"question": "What is the roof age in years?"})
+            questions.append(_question(
+                "roof_age_years",
+                "risk.roof_age_years",
+                "What is the roof age in years?",
+                "numeric",
+            ))
         
         return {
             "normalized_data": submission_data, 
@@ -85,7 +113,10 @@ class EnrichmentAgent(BaseAgent):
         flood_sfha = False
         territory = "MediumRiskCounty"
 
-        if any(token in address for token in ["sacramento", "santa rosa", "paradise", "fire zone"]):
+        if any(token in address for token in ["severe fire zone", "severe wildfire"]):
+            wildfire_band = "Severe"
+            territory = "HighRiskCounty"
+        elif any(token in address for token in ["sacramento", "santa rosa", "paradise", "fire zone"]):
             wildfire_band = "High"
             territory = "HighRiskCounty"
         if any(token in address for token in ["river", "fresno"]):
@@ -112,6 +143,7 @@ class EnrichmentAgent(BaseAgent):
                 "year_built": submission.risk.year_built,
                 "roof_age_years": submission.risk.roof_age_years,
                 "construction_type": submission.risk.construction_type,
+                "wildfire_mitigation_evidence": submission.risk.wildfire_mitigation_evidence,
                 "territory": territory,
             },
             "hazard_profile": hazard_profile,
@@ -235,6 +267,10 @@ class DecisionPackagerAgent(BaseAgent):
             for factor in decision_data.get("risk_factors", [])
         ]
 
+        next_steps = decision_data.get("next_steps")
+        if not next_steps and decision_data.get("required_questions"):
+            next_steps = ["Provide required information and resume this quote run."]
+
         return DecisionPacket(
             decision=decision,
             decision_confidence=decision_data.get("confidence", 0.8),
@@ -243,7 +279,7 @@ class DecisionPackagerAgent(BaseAgent):
             premium_indication=rating_data if isinstance(rating_data, dict) else {"annual_premium": rating_data, "currency": "USD"},
             needs_human_review=decision != DecisionType.ACCEPT,
             review_reason_codes=review_codes,
-            next_steps=_next_steps(decision, review_codes),
+            next_steps=next_steps or _next_steps(decision, review_codes),
             facts_used=decision_data.get("facts_used", {}),
             evidence_cited=[citation.get("chunk_id", "") for citation in evidence if isinstance(citation, dict)],
             tool_calls_summary=citations if evidence is not citations else [],
@@ -263,6 +299,35 @@ def _coerce_submission(data: Any) -> HO3Submission:
     if isinstance(data, dict) and "submission" in data:
         return _coerce_submission(data["submission"])
     raise ValueError("Expected HO3 submission data")
+
+
+def _is_missing_or_uncertain(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"", "unknown", "unk", "tbd", "n/a", "na", "unsure", "uncertain"}
+    return False
+
+
+def _question(
+    question_id: str,
+    field_path: str,
+    question: str,
+    question_type: str,
+    options: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    payload = {
+        "question_id": question_id,
+        "field_path": field_path,
+        "answer_key": field_path,
+        "question": question,
+        "question_text": question,
+        "question_type": question_type,
+        "required": True,
+    }
+    if options:
+        payload["options"] = options
+    return payload
 
 
 def _build_retrieval_query(submission: HO3Submission, hazard_profile: Dict[str, Any]) -> str:

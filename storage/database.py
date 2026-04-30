@@ -550,9 +550,13 @@ def create_hitl_task(self, task_id: str, run_id: str, status: str, priority: str
     """
     with sqlite3.connect(self.db_path) as conn:
         conn.execute("""
-            INSERT INTO hitl_tasks
+            INSERT OR REPLACE INTO hitl_tasks
             (task_id, run_id, status, priority, questions_json, assigned_to, sla_due_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                COALESCE((SELECT created_at FROM hitl_tasks WHERE task_id = ?), ?),
+                ?
+            )
         """, (
             task_id,
             run_id,
@@ -561,6 +565,7 @@ def create_hitl_task(self, task_id: str, run_id: str, status: str, priority: str
             questions_json,
             assigned_to,
             sla_due_at,
+            task_id,
             datetime.now().isoformat(),
             datetime.now().isoformat()
         ))
@@ -601,6 +606,22 @@ def list_hitl_tasks(self, status: Optional[str] = None, limit: int = 50) -> List
         cursor = conn.execute(query, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+def get_open_hitl_task_for_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get the latest open missing-information task for a run.
+    """
+    with sqlite3.connect(self.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute("""
+            SELECT * FROM hitl_tasks
+            WHERE run_id = ? AND status = 'open'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (run_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
 
 def process_hitl_action(self, task_id: str, action: Dict[str, Any], user_id: str) -> Dict[str, Any]:
@@ -650,4 +671,5 @@ UnderwritingDB.save_retrieval_event = save_retrieval_event
 UnderwritingDB.create_hitl_task = create_hitl_task
 UnderwritingDB.get_hitl_task = get_hitl_task
 UnderwritingDB.list_hitl_tasks = list_hitl_tasks
+UnderwritingDB.get_open_hitl_task_for_run = get_open_hitl_task_for_run
 UnderwritingDB.process_hitl_action = process_hitl_action

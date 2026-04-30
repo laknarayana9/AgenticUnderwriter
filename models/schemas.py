@@ -27,6 +27,8 @@ class RiskProfile(BaseModel):
     roof_age_years: Optional[int] = Field(None, ge=0, description="Age of roof in years")
     construction_type: Literal["frame", "masonry", "superior_masonry", "fire_resistive", "manufactured"] = Field(..., description="Construction type")
     stories: int = Field(default=1, ge=1, le=5, description="Number of stories")
+    wildfire_mitigation_evidence: Optional[bool] = Field(None, description="Whether defensible-space or wildfire mitigation evidence is documented")
+    mitigation_notes: Optional[str] = Field(None, description="Producer or underwriter notes describing mitigation evidence")
 
 
 class CoverageRequest(BaseModel):
@@ -179,6 +181,7 @@ class WorkflowState(BaseModel):
     tool_calls: List[ToolCall] = Field(default_factory=list)
     current_node: Optional[str] = None
     missing_info: List[str] = Field(default_factory=list)
+    required_questions: List[Dict[str, Any]] = Field(default_factory=list)
     additional_answers: Dict[str, Any] = Field(default_factory=dict)
     citation_guardrail_triggered: bool = False
 

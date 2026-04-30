@@ -92,7 +92,8 @@ def evaluate_underwriting_rules(
         ))
 
     wildfire_band = hazard_profile.get("wildfire_band")
-    if wildfire_band == "High":
+    mitigation_documented = submission.risk.wildfire_mitigation_evidence is True
+    if wildfire_band == "High" and not mitigation_documented:
         findings.append(RuleFinding(
             rule_id="UW-WF-001",
             outcome=DecisionType.REFER,
@@ -101,7 +102,7 @@ def evaluate_underwriting_rules(
             message="High wildfire band requires defensible-space evidence.",
             citation_query="wildfire high defensible space shall refer must request evidence",
         ))
-    elif wildfire_band == "Severe":
+    elif wildfire_band == "Severe" and not mitigation_documented:
         findings.append(RuleFinding(
             rule_id="UW-WF-002",
             outcome=DecisionType.DECLINE,
@@ -109,6 +110,15 @@ def evaluate_underwriting_rules(
             reason_code="WILDFIRE_SEVERE",
             message="Severe wildfire band is a hard decline unless mitigation is documented.",
             citation_query="wildfire severe must decline mitigation documented",
+        ))
+    elif wildfire_band == "Severe":
+        findings.append(RuleFinding(
+            rule_id="UW-WF-003",
+            outcome=DecisionType.REFER,
+            severity="high",
+            reason_code="WILDFIRE_SEVERE_MITIGATED",
+            message="Severe wildfire band has mitigation evidence and requires underwriter approval.",
+            citation_query="wildfire severe mitigation documented underwriter approval",
         ))
 
     if hazard_profile.get("flood_sfha"):
@@ -136,6 +146,7 @@ def evaluate_underwriting_rules(
             "year_built": submission.risk.year_built,
             "roof_age_years": submission.risk.roof_age_years,
             "wildfire_band": wildfire_band,
+            "wildfire_mitigation_evidence": submission.risk.wildfire_mitigation_evidence,
             "flood_sfha": hazard_profile.get("flood_sfha", False),
             "territory": property_profile.get("territory"),
         },
