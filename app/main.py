@@ -4,9 +4,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import uuid
+import json
 from datetime import datetime
 
-from models.schemas import QuoteSubmission, RunRecord, WorkflowState, HO3Submission
+from models.schemas import DecisionType, HumanReviewRecord, QuoteSubmission, RunRecord, WorkflowState, HO3Submission
 from workflows.agent_workflow import PhaseAWorkflow
 from storage.database import db
 
@@ -43,6 +44,15 @@ class MissingInfoAnswerRequest(BaseModel):
     answered_by: Optional[str] = None
 
 
+class ReviewActionRequest(BaseModel):
+    action: str
+    reviewer: Optional[str] = None
+    note: Optional[str] = None
+    final_decision: Optional[DecisionType] = None
+    approved_premium: Optional[float] = None
+    requested_info: Optional[list] = None
+
+
 class QuoteRunResponse(BaseModel):
     run_id: str
     status: str
@@ -66,6 +76,11 @@ class RunStatusResponse(BaseModel):
 
 class RunListResponse(BaseModel):
     runs: list
+    total_count: int
+
+
+class ReviewListResponse(BaseModel):
+    reviews: list
     total_count: int
 
 
@@ -122,7 +137,40 @@ def store_run_record(workflow_state: WorkflowState, status: Optional[str] = None
     )
     
     db.save_run_record(run_record)
+
+    if record_status == "pending_review":
+        _ensure_pending_review_record(workflow_state)
+
     return run_id
+
+
+def _ensure_pending_review_record(workflow_state: WorkflowState) -> None:
+    run_id = workflow_state.run_id
+    if not run_id:
+        return
+
+    existing_review = db.get_human_review_record(run_id)
+    if existing_review and existing_review.final_decision:
+        return
+    if existing_review and existing_review.status == "pending_review":
+        return
+
+    review_codes = workflow_state.decision_packet.review_reason_codes if workflow_state.decision_packet else []
+    db.save_human_review_record(HumanReviewRecord(
+        run_id=run_id,
+        status="pending_review",
+        requires_human_review=True,
+        review_priority=_review_priority(review_codes),
+        assigned_reviewer=existing_review.assigned_reviewer if existing_review else None,
+        submission_timestamp=datetime.now(),
+    ))
+
+
+def _review_priority(review_codes: list) -> str:
+    high_priority_codes = {"WILDFIRE_HIGH", "FLOOD_SFHA", "DECLINE", "COMMERCIAL_INELIGIBLE"}
+    if any(code in high_priority_codes for code in review_codes):
+        return "high"
+    return "medium"
 
 
 def _build_quote_response(workflow_state: WorkflowState, run_id: str) -> QuoteRunResponse:
@@ -202,6 +250,182 @@ def _normalize_ho3_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "risk": risk,
         "coverage_request": coverage,
         "quote_id": payload.get("quote_id"),
+    }
+
+
+def _decision_packet_json(workflow_state: WorkflowState) -> Optional[Dict[str, Any]]:
+    if not workflow_state.decision_packet:
+        return None
+    return workflow_state.decision_packet.model_dump(mode="json")
+
+
+def _human_review_json(review_record: Optional[HumanReviewRecord]) -> Optional[Dict[str, Any]]:
+    if not review_record:
+        return None
+    return review_record.model_dump(mode="json")
+
+
+def _build_review_summary(run_record: RunRecord) -> Dict[str, Any]:
+    workflow_state = run_record.workflow_state
+    decision_packet = workflow_state.decision_packet
+    review_record = db.get_human_review_record(run_record.run_id)
+
+    return {
+        "run_id": run_record.run_id,
+        "quote_id": workflow_state.quote_id,
+        "status": run_record.status,
+        "created_at": run_record.created_at,
+        "updated_at": run_record.updated_at,
+        "applicant_name": workflow_state.quote_submission.applicant_name,
+        "address": workflow_state.quote_submission.address,
+        "ai_recommendation": decision_packet.decision.value if decision_packet else None,
+        "review_reason_codes": decision_packet.review_reason_codes if decision_packet else [],
+        "decision_confidence": decision_packet.decision_confidence if decision_packet else None,
+        "final_decision": review_record.final_decision if review_record else None,
+        "review": _human_review_json(review_record),
+    }
+
+
+def _build_review_packet(run_record: RunRecord) -> Dict[str, Any]:
+    workflow_state = run_record.workflow_state
+    open_task = db.get_open_hitl_task_for_run(run_record.run_id)
+    review_record = db.get_human_review_record(run_record.run_id)
+
+    return {
+        "run_id": run_record.run_id,
+        "quote_id": workflow_state.quote_id,
+        "status": run_record.status,
+        "submission": workflow_state.submission_raw or workflow_state.quote_submission.model_dump(mode="json"),
+        "decision_packet": _decision_packet_json(workflow_state),
+        "ai_recommendation": (
+            workflow_state.decision_packet.decision.value
+            if workflow_state.decision_packet else None
+        ),
+        "final_review_decision": _human_review_json(review_record),
+        "open_task": open_task,
+        "events": workflow_state.events,
+    }
+
+
+def _review_questions(request: ReviewActionRequest) -> list:
+    if request.requested_info:
+        questions = []
+        for idx, item in enumerate(request.requested_info, start=1):
+            if isinstance(item, dict):
+                question = dict(item)
+            else:
+                question = {
+                    "question_id": f"review_request_{idx}",
+                    "question": str(item),
+                    "question_text": str(item),
+                    "question_type": "text",
+                    "required": True,
+                }
+            question.setdefault("question_id", f"review_request_{idx}")
+            question.setdefault("question_text", question.get("question", "Additional information requested."))
+            question.setdefault("required", True)
+            questions.append(question)
+        return questions
+
+    note = (request.note or "").strip()
+    if not note:
+        return []
+    return [{
+        "question_id": "review_requested_info",
+        "question": note,
+        "question_text": note,
+        "question_type": "text",
+        "required": True,
+    }]
+
+
+def _save_review_action(run_record: RunRecord, request: ReviewActionRequest) -> Dict[str, Any]:
+    workflow_state = run_record.workflow_state
+    if not workflow_state.decision_packet:
+        raise HTTPException(status_code=409, detail="Run does not have a decision packet to review")
+
+    open_review_task = db.get_open_hitl_task_for_run(run_record.run_id)
+    action = request.action.strip().lower()
+    if action not in {"approve", "override", "request_more_info"}:
+        raise HTTPException(status_code=400, detail="Action must be approve, override, or request_more_info")
+
+    reviewer = request.reviewer or "anonymous_reviewer"
+    note = (request.note or "").strip()
+    ai_recommendation = workflow_state.decision_packet.decision.value
+    final_decision = None
+    review_status = None
+
+    if action == "approve":
+        final_decision = ai_recommendation
+        review_status = "human_approved"
+        workflow_state.status = "completed"
+    elif action == "override":
+        if not note:
+            raise HTTPException(status_code=400, detail="Reviewer note is required for override")
+        if request.final_decision is None:
+            raise HTTPException(status_code=400, detail="final_decision is required for override")
+        final_decision = request.final_decision.value
+        review_status = "human_overridden"
+        workflow_state.status = "completed"
+    else:
+        questions = _review_questions(request)
+        if not questions:
+            raise HTTPException(status_code=400, detail="requested_info or note is required when requesting more information")
+        review_status = "more_info_requested"
+        workflow_state.status = "waiting_for_info"
+        workflow_state.current_node = "waiting_for_info"
+        workflow_state.required_questions = questions
+        workflow_state.missing_info = [question["question_id"] for question in questions]
+
+        db.create_hitl_task(
+            task_id=f"task_{run_record.run_id}_review_request_info",
+            run_id=run_record.run_id,
+            status="open",
+            priority="high",
+            questions_json=json.dumps(questions),
+            assigned_to=reviewer,
+        )
+
+    workflow_state.events.append({
+        "event": f"review_{action}",
+        "timestamp": datetime.now().isoformat(),
+        "reviewer": reviewer,
+        "ai_recommendation": ai_recommendation,
+        "final_decision": final_decision,
+        "note": note or None,
+    })
+
+    if open_review_task and open_review_task["status"] == "open":
+        db.process_hitl_action(
+            open_review_task["task_id"],
+            {"action": action, "answers": {"final_decision": final_decision, "note": note}},
+            reviewer,
+        )
+
+    db.save_human_review_record(HumanReviewRecord(
+        run_id=run_record.run_id,
+        status=review_status,
+        requires_human_review=action == "request_more_info",
+        final_decision=final_decision,
+        reviewer=reviewer,
+        review_timestamp=datetime.now(),
+        approved_premium=request.approved_premium,
+        reviewer_notes=note or None,
+        review_priority=_review_priority(workflow_state.decision_packet.review_reason_codes),
+        assigned_reviewer=reviewer,
+        submission_timestamp=run_record.created_at,
+    ))
+
+    store_run_record(workflow_state, status=workflow_state.status)
+    updated_record = db.get_run_record(run_record.run_id)
+    return {
+        "run_id": run_record.run_id,
+        "action": action,
+        "status": workflow_state.status,
+        "ai_recommendation": ai_recommendation,
+        "final_decision": final_decision,
+        "review": _human_review_json(db.get_human_review_record(run_record.run_id)),
+        "decision_packet": _decision_packet_json(updated_record.workflow_state if updated_record else workflow_state),
     }
 
 
@@ -327,6 +551,52 @@ async def list_runs(limit: int = 50, status: Optional[str] = None):
         runs=runs,
         total_count=len(runs)
     )
+
+
+@app.get("/reviews/pending", response_model=ReviewListResponse)
+async def list_pending_reviews(limit: int = 50):
+    """
+    List referred or declined risks waiting for a human reviewer.
+    """
+    pending_runs = db.list_runs(limit=limit, status="pending_review")
+    reviews = []
+    for run in pending_runs:
+        run_record = db.get_run_record(run["run_id"])
+        if run_record and run_record.workflow_state.decision_packet:
+            reviews.append(_build_review_summary(run_record))
+
+    return ReviewListResponse(
+        reviews=reviews,
+        total_count=len(reviews),
+    )
+
+
+@app.get("/reviews/{run_id}")
+async def get_review_packet(run_id: str):
+    """
+    View the AI decision packet and any separate human final decision for a run.
+    """
+    run_record = db.get_run_record(run_id)
+    if run_record is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not run_record.workflow_state.decision_packet:
+        raise HTTPException(status_code=404, detail="Decision packet not found")
+
+    return _build_review_packet(run_record)
+
+
+@app.post("/reviews/{run_id}/actions")
+async def process_review_action(run_id: str, request: ReviewActionRequest):
+    """
+    Approve the AI recommendation, override it, or request more information.
+    """
+    run_record = db.get_run_record(run_id)
+    if run_record is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run_record.status != "pending_review":
+        raise HTTPException(status_code=409, detail="Run is not pending review")
+
+    return _save_review_action(run_record, request)
 
 
 @app.get("/runs/{run_id}/audit")
