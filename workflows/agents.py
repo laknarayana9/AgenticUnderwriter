@@ -283,7 +283,7 @@ class DecisionPackagerAgent(BaseAgent):
             facts_used=decision_data.get("facts_used", {}),
             evidence_cited=[citation.get("chunk_id", "") for citation in evidence if isinstance(citation, dict)],
             tool_calls_summary=citations if evidence is not citations else [],
-            trace_link=f"local://decision/{datetime.now().timestamp()}"
+            trace_link=f"local-demo://decision/{datetime.now().timestamp()}"
         )
     
     def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
