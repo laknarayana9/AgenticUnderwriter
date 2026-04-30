@@ -94,35 +94,22 @@ def store_run_record(workflow_state: WorkflowState, status: Optional[str] = None
     existing_record = db.get_run_record(run_id)
     created_at = existing_record.created_at if existing_record else datetime.now()
     
-    # Create node outputs for audit trail
+    # Create node outputs for audit trail using enhanced workflow state fields
     node_outputs = {
         "validation": {
             "missing_info": workflow_state.missing_info,
             "tool_calls": [call.model_dump() for call in workflow_state.tool_calls if call.tool_name == "validate_submission"]
         },
-        "enrichment": {
-            "normalized_address": workflow_state.enrichment_result.normalized_address.model_dump() if workflow_state.enrichment_result else None,
-            "hazard_scores": workflow_state.enrichment_result.hazard_scores.model_dump() if workflow_state.enrichment_result else None,
-            "tool_calls": [call.model_dump() for call in workflow_state.tool_calls if call.tool_name in ["address_normalize", "hazard_score"]]
-        },
-        "retrieval": {
-            "guidelines_count": len(workflow_state.retrieved_guidelines),
-            "citations": [chunk.doc_id for chunk in workflow_state.retrieved_guidelines],
-            "tool_calls": [call.model_dump() for call in workflow_state.tool_calls if call.tool_name == "rag_retrieval"]
-        },
-        "assessment": {
-            "eligibility_score": workflow_state.uw_assessment.eligibility_score if workflow_state.uw_assessment else None,
-            "triggers": [t.model_dump() for t in workflow_state.uw_assessment.triggers] if workflow_state.uw_assessment else [],
-            "tool_calls": [call.model_dump() for call in workflow_state.tool_calls if call.tool_name == "underwriting_assessment"]
-        },
-        "rating": {
-            "premium": workflow_state.premium_breakdown.model_dump() if workflow_state.premium_breakdown else None,
-            "tool_calls": [call.model_dump() for call in workflow_state.tool_calls if call.tool_name == "rating_calculation"]
-        },
+        "enrichment": workflow_state.enrichment or {},
+        "retrieval": workflow_state.retrieval or {},
+        "assessment": workflow_state.assessment or {},
+        "verification": workflow_state.verification or {},
+        "rating": workflow_state.rating or {},
         "decision": {
-            "decision": workflow_state.decision.decision if workflow_state.decision else None,
-            "rationale": workflow_state.decision.rationale if workflow_state.decision else None,
-            "tool_calls": [call.model_dump() for call in workflow_state.tool_calls if call.tool_name == "decision_making"]
+            "decision_packet": workflow_state.decision_packet.model_dump() if workflow_state.decision_packet else None,
+            "legacy_decision": workflow_state.decision.decision if workflow_state.decision else None,
+            "legacy_rationale": workflow_state.decision.rationale if workflow_state.decision else None,
+            "tool_calls": [call.model_dump() for call in workflow_state.tool_calls if call.tool_name in ["decision_making", "decision_packager"]]
         }
     }
     
