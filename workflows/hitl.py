@@ -5,15 +5,8 @@ Minimal HITL (Human-in-the-Loop) workflow
 import logging
 import json
 from typing import Dict, Any, Optional
-from enum import Enum
 
 logger = logging.getLogger(__name__)
-
-class HITLActionType(Enum):
-    """HITL action types"""
-    REVIEW = "review"
-    APPROVE = "approve"
-    REJECT = "reject"
 
 def get_hitl_workflow(data=None):
     """Get HITL workflow instance"""

@@ -19,7 +19,7 @@ from workflows.agents import (
     VerifierGuardrailAgent,
     DecisionPackagerAgent
 )
-from workflows.hitl import get_hitl_workflow, HITLActionType
+from workflows.hitl import get_hitl_workflow
 from app.rag_engine import RAGEngine
 from tools import RatingTool
 

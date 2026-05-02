@@ -8,17 +8,24 @@ normalize an intake, identify missing or uncertain facts, ask targeted follow-up
 questions, resume the same quote run, produce a decision packet, and route
 referrals to a human review queue.
 
+Note: this is an agentic workflow orchestration prototype. The current
+agents are deterministic Python components coordinated through a multi-step
+workflow, with local synthetic RAG for citations. It does not claim autonomous
+LLM agents, model-driven planning, or external tool autonomy.
+
 ## What It Shows
 
 - FastAPI quote endpoints for legacy quote payloads and canonical HO3 payloads.
-- Seven-step agent workflow orchestration for intake, routing, enrichment,
-  retrieval, assessment, verification, rating, and decision packaging.
+- Seven-step deterministic agent workflow orchestration for intake, routing,
+  enrichment, retrieval, assessment, verification, rating, and decision
+  packaging.
 - Missing-info loop for roof age, occupancy, applicant/address gaps, and
   wildfire mitigation evidence.
 - Same-run resume through `/runs/{run_id}/answers` with audit events preserved.
 - Human review queue for referred or declined risks.
-- Decision packets with AI recommendation, confidence, reason codes, citations,
-  next steps, premium indication, facts used, and a local demo trace reference.
+- Decision packets with system recommendation, confidence, reason codes,
+  citations, next steps, premium indication, facts used, and a local demo trace
+  reference.
 - Versioned deterministic underwriting rules backed by synthetic guideline
   retrieval.
 
@@ -43,6 +50,8 @@ python scripts/demo_walkthrough.py
 The script uses FastAPI's in-process test client to exercise the real API
 routes. It walks through a missing roof-age pause and same-run resume, then a
 wildfire mitigation follow-up that moves into human review and approval.
+The payloads live in `examples/demo_submissions.json` so the demo is separate
+from test fixtures.
 
 ## Core API Flow
 
@@ -133,9 +142,46 @@ decision packet:
 Use `/runs/{run_id}/audit` for the full workflow state, node outputs, required
 questions, answer events, and final completion events.
 
+## Engineering Notes
+
+This repo is intentionally scoped as a governed agentic workflow rather than an
+autonomous LLM system.
+
+- **Why seven agents:** the workflow separates intake normalization, routing,
+  enrichment, retrieval, underwriting assessment, verification, rating, and
+  packaging so each step has a clear contract and can be tested or replaced
+  independently. That mirrors the operating model of regulated underwriting:
+  facts, evidence, decisioning, and review need distinct accountability.
+- **Why deterministic rules first:** underwriting decisions are high-consequence
+  and must be repeatable. The demo uses deterministic rules and local retrieval
+  so referral reasons, citations, and tests are stable. An LLM can be added for
+  question wording, document extraction, or summarization without becoming the
+  source of truth for eligibility.
+- **Auditability:** every run has a durable `run_id`; missing-info pauses,
+  follow-up answers, review actions, node outputs, decision packets, and final
+  outcomes are stored with the run. Human review decisions are recorded
+  separately from the system recommendation so the audit trail does not rewrite
+  the original decision.
+- **Reliability boundaries:** validation and routing happen before strict HO3
+  model construction so incomplete submissions can pause cleanly instead of
+  failing. Referral and decline decisions require retrieved citations before the
+  decision packet is finalized. The current SQLite store is local and suitable
+  for demo persistence, not concurrent production workloads.
+- **Known failure modes:** hazard enrichment is heuristic, retrieval is local
+  lexical search, observability is log-only, and HITL assignment/SLA handling is
+  skeletal. The workflow also assumes trusted API callers and does not implement
+  auth, rate limits, idempotency, or PII redaction.
+- **Production extension path:** replace deterministic enrichment with provider
+  integrations, move persistence to Postgres, add idempotency and auth, persist
+  OpenTelemetry traces, introduce queue-backed HITL tasks, and add LLM/tool
+  calls behind the existing agent contracts for extraction, evidence gathering,
+  and producer-facing explanations. Keep deterministic rule evaluation as the
+  governed decision layer.
+
 ## Demo Scenarios
 
-The product tests use curated scenarios in `tests/demo_scenarios.py`, including:
+The one-command walkthrough uses `examples/demo_submissions.json`. The product
+tests also use curated scenarios in `tests/demo_scenarios.py`, including:
 
 - low-risk accepted quote
 - high wildfire referral with mitigation-evidence follow-up

@@ -23,18 +23,19 @@ if str(ROOT) not in sys.path:
 from fastapi.testclient import TestClient
 
 from app.main import app
-from tests.demo_scenarios import get_scenario
 
 
 client = TestClient(app)
+DEMO_SUBMISSIONS_PATH = ROOT / "examples" / "demo_submissions.json"
 
 
 def main() -> None:
     print("\nAgentic Underwriter: one-command demo")
     print("=" * 44)
+    submissions = load_demo_submissions()
 
-    missing_info_run = run_missing_roof_age_flow()
-    wildfire_run = run_wildfire_review_flow()
+    missing_info_run = run_missing_roof_age_flow(submissions["missing_roof_age"])
+    wildfire_run = run_wildfire_review_flow(submissions["wildfire_high"])
 
     print("\nDone")
     print("-" * 44)
@@ -44,10 +45,10 @@ def main() -> None:
     print("  uvicorn app.main:app --reload")
 
 
-def run_missing_roof_age_flow() -> str:
+def run_missing_roof_age_flow(submission: Dict[str, Any]) -> str:
     print("\n1. Missing-info loop: missing roof age")
 
-    response = post("/quote/ho3", {"submission": get_scenario(3)["submission"]})
+    response = post("/quote/ho3", {"submission": deepcopy(submission)})
     assert_status(response, "waiting_for_info")
 
     run_id = response["run_id"]
@@ -73,11 +74,10 @@ def run_missing_roof_age_flow() -> str:
     return run_id
 
 
-def run_wildfire_review_flow() -> str:
+def run_wildfire_review_flow(submission: Dict[str, Any]) -> str:
     print("\n2. Wildfire evidence and human review")
 
-    submission = deepcopy(get_scenario(2)["submission"])
-    response = post("/quote/ho3", {"submission": submission})
+    response = post("/quote/ho3", {"submission": deepcopy(submission)})
     assert_status(response, "waiting_for_info")
 
     run_id = response["run_id"]
@@ -125,6 +125,11 @@ def post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         response = client.post(path, json=payload)
     response.raise_for_status()
     return response.json()
+
+
+def load_demo_submissions() -> Dict[str, Dict[str, Any]]:
+    with DEMO_SUBMISSIONS_PATH.open() as f:
+        return json.load(f)
 
 
 def assert_status(payload: Dict[str, Any], expected: str) -> None:
