@@ -118,7 +118,7 @@ class DecisionPacket(BaseModel):
     facts_used: Dict[str, Any] = Field(default_factory=dict, description="Key facts used in decision")
     evidence_cited: List[str] = Field(default_factory=list, description="Evidence chunk IDs cited")
     tool_calls_summary: List[Dict[str, Any]] = Field(default_factory=list, description="Summary of tool calls made")
-    trace_link: Optional[str] = Field(None, description="Local demo trace reference")
+    trace_link: Optional[str] = Field(None, description="Trace reference")
 
 
 class UWTrigger(BaseModel):

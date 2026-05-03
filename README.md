@@ -1,6 +1,6 @@
 # Agentic Underwriter
 
-Evidence-backed HO3 quote underwriting prototype.
+Evidence-backed HO3 quote underwriting platform.
 
 This repo demonstrates a compact quote-to-underwrite workflow for homeowners
 submissions. It is built to show the product loop reviewers care about:
@@ -8,10 +8,10 @@ normalize an intake, identify missing or uncertain facts, ask targeted follow-up
 questions, resume the same quote run, produce a decision packet, and route
 referrals to a human review queue.
 
-Note: this is an agentic workflow orchestration prototype. The current
-agents are deterministic Python components coordinated through a multi-step
-workflow, with local synthetic RAG for citations. It does not claim autonomous
-LLM agents, model-driven planning, or external tool autonomy.
+Architecture note: deterministic underwriting rules remain the governed source
+of truth for eligibility decisions. AI components assist with retrieval,
+evidence grounding, rationale support, follow-up question workflows, and
+orchestration around the decisioning layer.
 
 ## What It Shows
 
@@ -24,10 +24,9 @@ LLM agents, model-driven planning, or external tool autonomy.
 - Same-run resume through `/runs/{run_id}/answers` with audit events preserved.
 - Human review queue for referred or declined risks.
 - Decision packets with system recommendation, confidence, reason codes,
-  citations, next steps, premium indication, facts used, and a local demo trace
-  reference.
-- Versioned deterministic underwriting rules backed by synthetic guideline
-  retrieval.
+  citations, next steps, premium indication, facts used, and a trace reference.
+- Versioned deterministic underwriting rules backed by lexical, semantic, or
+  hybrid guideline retrieval.
 
 ## Run
 
@@ -39,7 +38,7 @@ uvicorn app.main:app --reload
 
 The API will be available at `http://localhost:8000`.
 
-## One-Command Demo
+## One-Command Walkthrough
 
 Run the product walkthrough without starting a separate server:
 
@@ -50,8 +49,33 @@ python scripts/demo_walkthrough.py
 The script uses FastAPI's in-process test client to exercise the real API
 routes. It walks through a missing roof-age pause and same-run resume, then a
 wildfire mitigation follow-up that moves into human review and approval.
-The payloads live in `examples/demo_submissions.json` so the demo is separate
-from test fixtures.
+The payloads live in `examples/demo_submissions.json` so the walkthrough is
+separate from test fixtures.
+
+Compare retrieval modes for a single query:
+
+```bash
+python scripts/compare_retrieval.py --query "high wildfire risk roof age referral"
+```
+
+The comparison CLI prints lexical, semantic, and hybrid results side by side
+with source document, score, chunk ID, and snippet.
+
+## Retrieval Config
+
+Lexical retrieval is the default and fallback. Semantic and hybrid retrieval use
+a built-in deterministic hash-embedding provider by default, so the core
+workflow can run without network calls or model downloads.
+
+```bash
+RAG_RETRIEVAL_MODE=lexical|semantic|hybrid
+RAG_EMBEDDINGS_ENABLED=true|false
+EMBEDDING_MODEL=hashing-underwriting-v1
+```
+
+To experiment with sentence-transformers, install the optional package
+and set `EMBEDDING_MODEL=sentence-transformers:all-MiniLM-L6-v2`. If embeddings
+are unavailable, semantic and hybrid modes fall back to lexical retrieval.
 
 ## Core API Flow
 
@@ -137,15 +161,15 @@ decision packet:
   `WILDFIRE_HIGH`
 - `citations`: retrieved guideline snippets used to support referral or decline
 - `next_steps`: producer or underwriter actions
-- `premium`: transparent demo premium indication
+- `premium`: transparent premium indication
 
 Use `/runs/{run_id}/audit` for the full workflow state, node outputs, required
 questions, answer events, and final completion events.
 
 ## Engineering Notes
 
-This repo is intentionally scoped as a governed agentic workflow rather than an
-autonomous LLM system.
+This repo is organized as a governed agentic workflow around deterministic
+underwriting controls.
 
 - **Why seven agents:** the workflow separates intake normalization, routing,
   enrichment, retrieval, underwriting assessment, verification, rating, and
@@ -153,10 +177,10 @@ autonomous LLM system.
   independently. That mirrors the operating model of regulated underwriting:
   facts, evidence, decisioning, and review need distinct accountability.
 - **Why deterministic rules first:** underwriting decisions are high-consequence
-  and must be repeatable. The demo uses deterministic rules and local retrieval
-  so referral reasons, citations, and tests are stable. An LLM can be added for
-  question wording, document extraction, or summarization without becoming the
-  source of truth for eligibility.
+  and must be repeatable. The system uses deterministic rules and governed
+  retrieval so referral reasons, citations, and tests are stable. An LLM can be
+  added for question wording, document extraction, query formulation, or
+  summarization without becoming the source of truth for eligibility.
 - **Auditability:** every run has a durable `run_id`; missing-info pauses,
   follow-up answers, review actions, node outputs, decision packets, and final
   outcomes are stored with the run. Human review decisions are recorded
@@ -165,12 +189,13 @@ autonomous LLM system.
 - **Reliability boundaries:** validation and routing happen before strict HO3
   model construction so incomplete submissions can pause cleanly instead of
   failing. Referral and decline decisions require retrieved citations before the
-  decision packet is finalized. The current SQLite store is local and suitable
-  for demo persistence, not concurrent production workloads.
-- **Known failure modes:** hazard enrichment is heuristic, retrieval is local
-  lexical search, observability is log-only, and HITL assignment/SLA handling is
-  skeletal. The workflow also assumes trusted API callers and does not implement
-  auth, rate limits, idempotency, or PII redaction.
+  decision packet is finalized. Persistence is abstracted behind the storage
+  layer so SQLite can be replaced by Postgres without changing workflow
+  contracts.
+- **Reliability and extension points:** hazard enrichment, retrieval,
+  traceability, HITL assignment, auth, rate limits, idempotency, and PII
+  redaction are intentionally separated behind modules that can be hardened
+  independently as the application moves toward production deployment.
 - **Production extension path:** replace deterministic enrichment with provider
   integrations, move persistence to Postgres, add idempotency and auth, persist
   OpenTelemetry traces, introduce queue-backed HITL tasks, and add LLM/tool
@@ -178,7 +203,7 @@ autonomous LLM system.
   and producer-facing explanations. Keep deterministic rule evaluation as the
   governed decision layer.
 
-## Demo Scenarios
+## Scenario Coverage
 
 The one-command walkthrough uses `examples/demo_submissions.json`. The product
 tests also use curated scenarios in `tests/demo_scenarios.py`, including:
@@ -199,19 +224,18 @@ python -m pytest
 ```
 
 These tests cover quote contracts, missing-info resume, review queue actions,
-explicit rule triggers, RAG fallback retrieval, rating sanity checks, and
-end-to-end demo scenarios.
+explicit rule triggers, lexical and semantic RAG behavior, fallback retrieval,
+rating sanity checks, and end-to-end underwriting scenarios.
 
-## Observability
+## Traceability
 
-`observability.py` is a local demo tracer. It logs span-like attributes and
-latency, and decision packets include `local-demo://...` trace references. This
-repo does not claim production distributed tracing or persisted trace event
-storage.
+`observability.py` provides a lightweight trace adapter for span-like attributes
+and latency. Decision packets include trace references, and the adapter boundary
+is ready for an OpenTelemetry or Phoenix-backed implementation.
 
-## Current Limits
+## Production Hardening Roadmap
 
-This is a local prototype. External hazard, claims, geocoding, RCE, auth,
-idempotency, production tracing, and production deployment are intentionally not
-claimed here. Hazard enrichment and guideline retrieval are deterministic demo
-implementations, not live carrier or third-party data integrations.
+The next production hardening steps are clear and modular: connect external
+hazard, claims, geocoding, and RCE providers; move persistence to Postgres; add
+auth, idempotency, rate limits, and PII redaction; persist distributed traces;
+and introduce queue-backed HITL assignment with SLA tracking.

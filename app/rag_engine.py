@@ -5,13 +5,12 @@ Implements document ingestion, intelligent chunking, and evidence retrieval
 with proper citation tracking and confidence scoring.
 """
 
-import os
 import re
-import json
 import hashlib
 import logging
+import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -42,6 +41,114 @@ from models.schemas import RetrievalChunk
 logger = logging.getLogger(__name__)
 
 
+RETRIEVAL_MODE_LEXICAL = "lexical"
+RETRIEVAL_MODE_SEMANTIC = "semantic"
+RETRIEVAL_MODE_HYBRID = "hybrid"
+VALID_RETRIEVAL_MODES = {
+    RETRIEVAL_MODE_LEXICAL,
+    RETRIEVAL_MODE_SEMANTIC,
+    RETRIEVAL_MODE_HYBRID,
+}
+
+
+@dataclass(frozen=True)
+class RAGRetrievalConfig:
+    """Environment-controlled RAG retrieval configuration."""
+    retrieval_mode: str = RETRIEVAL_MODE_LEXICAL
+    embeddings_enabled: bool = False
+    embedding_model: str = "hashing-underwriting-v1"
+
+    @classmethod
+    def from_env(cls) -> "RAGRetrievalConfig":
+        mode = os.getenv("RAG_RETRIEVAL_MODE", RETRIEVAL_MODE_LEXICAL).strip().lower()
+        if mode not in VALID_RETRIEVAL_MODES:
+            logger.warning("Invalid RAG_RETRIEVAL_MODE=%s; using lexical", mode)
+            mode = RETRIEVAL_MODE_LEXICAL
+
+        embeddings_enabled = os.getenv("RAG_EMBEDDINGS_ENABLED", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        embedding_model = os.getenv("EMBEDDING_MODEL", "hashing-underwriting-v1").strip()
+        return cls(
+            retrieval_mode=mode,
+            embeddings_enabled=embeddings_enabled,
+            embedding_model=embedding_model,
+        )
+
+
+class EmbeddingProvider:
+    """Small local interface for embedding providers."""
+
+    model_name: str
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        raise NotImplementedError
+
+
+class HashingEmbeddingProvider(EmbeddingProvider):
+    """
+    Deterministic local embedding provider.
+
+    This is intentionally lightweight: no network, no model download, stable
+    tests. It supports semantic-ish matching through normalized hashed token
+    vectors and can be swapped for a real provider behind the same interface.
+    """
+
+    def __init__(self, model_name: str = "hashing-underwriting-v1", dimensions: int = 384):
+        self.model_name = model_name
+        self.dimensions = dimensions
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        vectors = np.zeros((len(texts), self.dimensions), dtype=np.float32)
+        for row_idx, text in enumerate(texts):
+            for token in self._tokens(text):
+                digest = hashlib.md5(token.encode("utf-8")).hexdigest()
+                index = int(digest[:8], 16) % self.dimensions
+                sign = 1.0 if int(digest[8:10], 16) % 2 == 0 else -1.0
+                vectors[row_idx, index] += sign
+
+            norm = np.linalg.norm(vectors[row_idx])
+            if norm > 0:
+                vectors[row_idx] = vectors[row_idx] / norm
+        return vectors
+
+    def _tokens(self, text: str) -> List[str]:
+        raw_tokens = re.findall(r"[a-z0-9]+", text.lower())
+        expanded = []
+        synonyms = {
+            "wildfire": ["fire", "brushfire"],
+            "fire": ["wildfire"],
+            "mitigation": ["defensible", "space", "documentation"],
+            "evidence": ["documentation", "proof"],
+            "roof": ["roofing"],
+            "refer": ["referral", "review"],
+            "referral": ["refer", "review"],
+        }
+        for token in raw_tokens:
+            if len(token) <= 2:
+                continue
+            expanded.append(token)
+            expanded.extend(synonyms.get(token, []))
+        return expanded
+
+
+class SentenceTransformerEmbeddingProvider(EmbeddingProvider):
+    """Optional local sentence-transformers provider when installed."""
+
+    def __init__(self, model_name: str):
+        if not EMBEDDINGS_AVAILABLE:
+            raise RuntimeError("sentence-transformers is not installed")
+        self.model_name = model_name
+        self.model = SentenceTransformer(model_name)
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        vectors = self.model.encode(texts, normalize_embeddings=True)
+        return np.asarray(vectors, dtype=np.float32)
+
+
 @dataclass
 class DocumentMetadata:
     """Metadata for ingested documents"""
@@ -67,7 +174,12 @@ class RAGEngine:
     - Citation tracking with offsets
     """
     
-    def __init__(self, chroma_path: str = "./storage/chroma_db", data_dir: str = "app/externaldata/docs"):
+    def __init__(
+        self,
+        chroma_path: str = "./storage/chroma_db",
+        data_dir: str = "app/externaldata/docs",
+        config: Optional[RAGRetrievalConfig] = None,
+    ):
         """
         Initialize RAG Engine with technical architecture decisions
         
@@ -90,7 +202,9 @@ class RAGEngine:
         self.data_dir = Path(data_dir)
         self.documents: Dict[str, DocumentMetadata] = {}
         self.chunks: List[RetrievalChunk] = []
-        use_embeddings = os.getenv("RAG_EMBEDDINGS_ENABLED", "false").lower() == "true"
+        self.config = config or RAGRetrievalConfig.from_env()
+        self.embedding_provider: Optional[EmbeddingProvider] = self._create_embedding_provider()
+        self.chunk_embeddings: Optional[np.ndarray] = None
         
         self.chunk_size_tokens = 600  # Target tokens per chunk
         self.chunk_overlap = 100      # Character overlap
@@ -98,7 +212,13 @@ class RAGEngine:
 
         self.client = None
         self.collection = None
-        if CHROMA_AVAILABLE and use_embeddings:
+        use_chroma = (
+            CHROMA_AVAILABLE
+            and self.config.embeddings_enabled
+            and self.embedding_provider is not None
+            and self.config.embedding_model.startswith("sentence-transformers:")
+        )
+        if use_chroma:
             self.client = chromadb.PersistentClient(
                 path=chroma_path,
                 settings=Settings(anonymized_telemetry=False)
@@ -112,25 +232,32 @@ class RAGEngine:
                     name="underwriting_guidelines"
                 )
         
-        # Initialize embeddings
-        if EMBEDDINGS_AVAILABLE and use_embeddings:
-            try:
-                self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-                self.embedding_dim = self.embedding_model.get_embedding_dimension()
-                logger.info("SentenceTransformer embeddings initialized")
-            except Exception as e:
-                logger.warning(f"SentenceTransformer initialization failed, using lexical retrieval: {e}")
-                self.embedding_model = None
-                self.embedding_dim = 384
+        self.embedding_model = self.embedding_provider
+        self.embedding_dim = getattr(self.embedding_provider, "dimensions", 384)
+        if self.embedding_provider is None:
+            logger.info("Using lexical retrieval; enable embeddings for semantic/hybrid retrieval")
         else:
-            logger.info("Using lexical retrieval; set RAG_EMBEDDINGS_ENABLED=true to use embeddings")
-            self.embedding_model = None
-            self.embedding_dim = 384  # Mock dimension
+            logger.info("Embedding provider initialized: %s", self.embedding_provider.model_name)
         
     @property
     def embeddings_available(self) -> bool:
         """Check if real embeddings are available"""
-        return EMBEDDINGS_AVAILABLE and self.embedding_model is not None
+        return self.embedding_provider is not None
+
+    def _create_embedding_provider(self) -> Optional[EmbeddingProvider]:
+        if not self.config.embeddings_enabled:
+            return None
+
+        model = self.config.embedding_model or "hashing-underwriting-v1"
+        if model.startswith("sentence-transformers:"):
+            model_name = model.split(":", 1)[1] or "all-MiniLM-L6-v2"
+            try:
+                return SentenceTransformerEmbeddingProvider(model_name)
+            except Exception as e:
+                logger.warning("SentenceTransformer provider unavailable, falling back to lexical: %s", e)
+                return None
+
+        return HashingEmbeddingProvider(model_name=model)
         
     def ingest_documents(self, force_reingest: bool = False) -> Dict[str, Any]:
         """
@@ -179,9 +306,15 @@ class RAGEngine:
                 print(f" Error processing {file_path.name}: {e}")
                 logger.error(f" Error processing {file_path.name}: {e}")
         
-        # Store in ChromaDB when both Chroma and embeddings are available. Otherwise
-        # retrieval uses the in-memory chunks with deterministic lexical scoring.
-        if self.chunks and self.collection is not None and self.embedding_model is not None:
+        if self.chunks and self.embedding_provider is not None:
+            self.chunk_embeddings = self.embedding_provider.embed([
+                self._embedding_text(chunk) for chunk in self.chunks
+            ])
+
+        # Store in ChromaDB when both Chroma and sentence-transformer embeddings
+        # are available. Otherwise retrieval uses in-memory lexical/embedding
+        # scoring with deterministic fallback.
+        if self.chunks and self.collection is not None and self.embedding_provider is not None:
             logger.info(f"🗄️ Storing {len(self.chunks)} chunks in ChromaDB")
             self._store_chunks()
         
@@ -189,8 +322,10 @@ class RAGEngine:
             "documents_processed": len(self.documents),
             "total_chunks": total_chunks,
             "chunks_per_doc": {doc_id: info.total_chunks for doc_id, info in self.documents.items()},
-            "retrieval_mode": "semantic" if self.embedding_model is not None else "lexical",
-            "embedding_model": "all-MiniLM-L6-v2" if self.embedding_model is not None else None,
+            "configured_retrieval_mode": self.config.retrieval_mode,
+            "effective_retrieval_mode": self._effective_retrieval_mode(),
+            "embeddings_enabled": self.config.embeddings_enabled,
+            "embedding_model": self.embedding_provider.model_name if self.embedding_provider else None,
             "ingestion_timestamp": datetime.now().isoformat()
         }
         
@@ -432,15 +567,12 @@ class RAGEngine:
         metadatas = [chunk.metadata for chunk in self.chunks]
         ids = [chunk.chunk_id for chunk in self.chunks]
         
-        # Generate embeddings
-        if self.embedding_model:
-            print("🔢 Generating embeddings...")
-            logger.info(f"🔢 Generating embeddings for {len(documents)} documents")
-            embeddings = self.embedding_model.encode(documents).tolist()
-        else:
-            # Mock embeddings for testing
-            logger.warning(" Using mock embeddings for testing")
-            embeddings = [np.random.random(self.embedding_dim).tolist() for _ in documents]
+        if self.embedding_provider is None:
+            logger.warning("Skipping Chroma storage because no embedding provider is available")
+            return
+
+        logger.info("Generating embeddings for %s documents", len(documents))
+        embeddings = self.embedding_provider.embed(documents).tolist()
         
         # Store in batches
         batch_size = 100
@@ -460,8 +592,13 @@ class RAGEngine:
         print(f" Successfully stored {len(documents)} chunks")
         logger.info(f" Successfully stored {len(documents)} chunks in ChromaDB")
     
-    def retrieve(self, query: str, n_results: int = 5, 
-                 filters: Optional[Dict[str, Any]] = None) -> List[RetrievalChunk]:
+    def retrieve(
+        self,
+        query: str,
+        n_results: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        mode: Optional[str] = None,
+    ) -> List[RetrievalChunk]:
         """
         Retrieve relevant chunks with semantic search
         
@@ -499,57 +636,106 @@ class RAGEngine:
         Returns:
             List of relevant chunks with relevance scores
         """
+        requested_mode = (mode or self.config.retrieval_mode).strip().lower()
+        if requested_mode not in VALID_RETRIEVAL_MODES:
+            requested_mode = RETRIEVAL_MODE_LEXICAL
+
         try:
-            if self.collection is None or self.embedding_model is None:
+            if requested_mode == RETRIEVAL_MODE_LEXICAL:
                 return self._lexical_retrieve(query, n_results=n_results, filters=filters)
 
-            # Generate query embedding
-            if self.embedding_model:
-                query_embedding = self.embedding_model.encode([query]).tolist()
-            else:
-                query_embedding = [np.random.random(self.embedding_dim).tolist()]
-            
-            # Prepare where filter
-            where_clause = filters if filters else {}
-            
-            # Search ChromaDB
-            results = self.collection.query(
-                query_embeddings=query_embedding,
-                n_results=n_results,
-                where=where_clause,
-                include=["documents", "metadatas", "distances"]
-            )
-            
-            # Convert to RetrievalChunk objects
-            chunks = []
-            for i in range(len(results["documents"][0])):
-                doc = results["documents"][0][i]
-                metadata = results["metadatas"][0][i]
-                distance = results["distances"][0][i]
-                
-                # Convert distance to relevance score (lower distance = higher relevance)
-                relevance_score = 1.0 / (1.0 + distance)
-                
-                chunk = RetrievalChunk(
-                    doc_id=metadata["doc_id"],
-                    doc_version=metadata["version"],
-                    section=metadata["section"],
-                    chunk_id=metadata["chunk_id"],
-                    text=doc,
-                    metadata=metadata,
-                    relevance_score=relevance_score
-                )
-                chunks.append(chunk)
-            
-            return chunks
-            
-        except Exception as e:
-            logger.warning(f"Semantic retrieval failed, falling back to lexical retrieval: {e}")
+            if requested_mode == RETRIEVAL_MODE_SEMANTIC:
+                if not self.embeddings_available:
+                    logger.info("Semantic retrieval requested without embeddings; using lexical fallback")
+                    return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+                return self._semantic_retrieve(query, n_results=n_results, filters=filters)
+
+            if requested_mode == RETRIEVAL_MODE_HYBRID:
+                if not self.embeddings_available:
+                    logger.info("Hybrid retrieval requested without embeddings; using lexical fallback")
+                    return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+                return self._hybrid_retrieve(query, n_results=n_results, filters=filters)
+
             return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+        except Exception as e:
+            logger.warning("RAG retrieval failed in %s mode, falling back to lexical: %s", requested_mode, e)
+            return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+
+    def compare_retrieval(self, query: str, n_results: int = 5) -> Dict[str, List[RetrievalChunk]]:
+        """Return side-by-side lexical, semantic, and hybrid retrieval results."""
+        return {
+            RETRIEVAL_MODE_LEXICAL: self.retrieve(query, n_results=n_results, mode=RETRIEVAL_MODE_LEXICAL),
+            RETRIEVAL_MODE_SEMANTIC: self.retrieve(query, n_results=n_results, mode=RETRIEVAL_MODE_SEMANTIC),
+            RETRIEVAL_MODE_HYBRID: self.retrieve(query, n_results=n_results, mode=RETRIEVAL_MODE_HYBRID),
+        }
+
+    def _effective_retrieval_mode(self) -> str:
+        if self.config.retrieval_mode in {RETRIEVAL_MODE_SEMANTIC, RETRIEVAL_MODE_HYBRID} and not self.embeddings_available:
+            return RETRIEVAL_MODE_LEXICAL
+        return self.config.retrieval_mode
+
+    def _semantic_retrieve(self, query: str, n_results: int = 5,
+                           filters: Optional[Dict[str, Any]] = None) -> List[RetrievalChunk]:
+        if not self.chunks:
+            self.ingest_documents()
+        if self.embedding_provider is None:
+            return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+        if self.chunk_embeddings is None or len(self.chunk_embeddings) != len(self.chunks):
+            self.chunk_embeddings = self.embedding_provider.embed([
+                self._embedding_text(chunk) for chunk in self.chunks
+            ])
+
+        query_embedding = self.embedding_provider.embed([query])[0]
+        scored_chunks = []
+
+        for idx, chunk in enumerate(self.chunks):
+            if filters and any(chunk.metadata.get(key) != value for key, value in filters.items()):
+                continue
+            score = float(np.dot(query_embedding, self.chunk_embeddings[idx]))
+            normalized_score = (score + 1.0) / 2.0
+            chunk_copy = chunk.model_copy(deep=True)
+            chunk_copy.relevance_score = max(0.0, min(1.0, normalized_score))
+            chunk_copy.score = chunk_copy.relevance_score
+            chunk_copy.metadata["retrieval_mode"] = RETRIEVAL_MODE_SEMANTIC
+            chunk_copy.metadata["embedding_model"] = self.embedding_provider.model_name
+            scored_chunks.append((chunk_copy.relevance_score, chunk_copy))
+
+        scored_chunks.sort(key=lambda item: item[0], reverse=True)
+        return [chunk for _, chunk in scored_chunks[:n_results]]
+
+    def _hybrid_retrieve(self, query: str, n_results: int = 5,
+                         filters: Optional[Dict[str, Any]] = None) -> List[RetrievalChunk]:
+        lexical = self._lexical_retrieve(query, n_results=max(n_results * 3, 10), filters=filters)
+        semantic = self._semantic_retrieve(query, n_results=max(n_results * 3, 10), filters=filters)
+        merged: Dict[str, RetrievalChunk] = {}
+        scores: Dict[str, float] = {}
+
+        for rank, chunk in enumerate(semantic):
+            semantic_score = chunk.relevance_score or 0.0
+            rank_boost = 1.0 / (rank + 1)
+            scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (0.65 * semantic_score) + (0.05 * rank_boost)
+            merged[chunk.chunk_id] = chunk
+
+        for rank, chunk in enumerate(lexical):
+            lexical_score = chunk.relevance_score or 0.0
+            rank_boost = 1.0 / (rank + 1)
+            scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (0.30 * lexical_score) + (0.05 * rank_boost)
+            merged.setdefault(chunk.chunk_id, chunk)
+
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        results = []
+        for chunk_id, score in ranked[:n_results]:
+            chunk = merged[chunk_id].model_copy(deep=True)
+            chunk.relevance_score = max(0.0, min(1.0, score))
+            chunk.score = chunk.relevance_score
+            chunk.metadata["retrieval_mode"] = RETRIEVAL_MODE_HYBRID
+            chunk.metadata["embedding_model"] = self.embedding_provider.model_name if self.embedding_provider else None
+            results.append(chunk)
+        return results
 
     def _lexical_retrieve(self, query: str, n_results: int = 5,
                           filters: Optional[Dict[str, Any]] = None) -> List[RetrievalChunk]:
-        """Deterministic fallback retrieval for local demos and tests."""
+        """Deterministic fallback retrieval for configured lexical mode and tests."""
         if not self.chunks:
             self.ingest_documents()
 
@@ -570,10 +756,21 @@ class RAGEngine:
             if score > 0:
                 chunk_copy = chunk.model_copy(deep=True)
                 chunk_copy.relevance_score = min(1.0, 0.35 + (score / 10))
+                chunk_copy.score = chunk_copy.relevance_score
+                chunk_copy.metadata["retrieval_mode"] = RETRIEVAL_MODE_LEXICAL
                 scored_chunks.append((score, chunk_copy))
 
         scored_chunks.sort(key=lambda item: item[0], reverse=True)
         return [chunk for _, chunk in scored_chunks[:n_results]]
+
+    def _embedding_text(self, chunk: RetrievalChunk) -> str:
+        return " ".join([
+            chunk.metadata.get("doc_title", ""),
+            chunk.section,
+            chunk.metadata.get("subsection", ""),
+            chunk.text,
+            chunk.metadata.get("rule_strength", ""),
+        ])
     
     def get_document_summary(self) -> Dict[str, Any]:
         """Get summary of ingested documents"""

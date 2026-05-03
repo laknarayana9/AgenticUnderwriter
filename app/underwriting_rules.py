@@ -1,5 +1,5 @@
 """
-Versioned deterministic underwriting rules for the demo HO3 workflow.
+Versioned deterministic underwriting rules for the HO3 workflow.
 """
 
 from dataclasses import dataclass
@@ -36,7 +36,7 @@ def evaluate_underwriting_rules(
     hazard_profile: Optional[Dict[str, Any]] = None,
     property_profile: Optional[Dict[str, Any]] = None,
 ) -> RuleEvaluation:
-    """Evaluate deterministic demo underwriting rules."""
+    """Evaluate deterministic underwriting rules."""
     hazard_profile = hazard_profile or {}
     property_profile = property_profile or {}
     findings: List[RuleFinding] = []

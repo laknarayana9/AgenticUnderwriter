@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One-command product walkthrough for the local Agentic Underwriter demo.
+One-command product walkthrough for Agentic Underwriter.
 
 Run from the repo root:
     python scripts/demo_walkthrough.py
@@ -30,7 +30,7 @@ DEMO_SUBMISSIONS_PATH = ROOT / "examples" / "demo_submissions.json"
 
 
 def main() -> None:
-    print("\nAgentic Underwriter: one-command demo")
+    print("\nAgentic Underwriter: one-command walkthrough")
     print("=" * 44)
     submissions = load_demo_submissions()
 

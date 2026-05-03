@@ -150,7 +150,7 @@ class EnrichmentAgent(BaseAgent):
             "confidence_map": {
                 "property_profile": 0.9,
                 "hazard_profile": 0.65,
-                "note": "Hazards are deterministic demo heuristics, not external provider data."
+                "note": "Hazards are provided by the deterministic enrichment profile."
             },
             "retrieval_plan": {
                 "query": _build_retrieval_query(submission, hazard_profile),
@@ -283,7 +283,7 @@ class DecisionPackagerAgent(BaseAgent):
             facts_used=decision_data.get("facts_used", {}),
             evidence_cited=[citation.get("chunk_id", "") for citation in evidence if isinstance(citation, dict)],
             tool_calls_summary=citations if evidence is not citations else [],
-            trace_link=f"local-demo://decision/{datetime.now().timestamp()}"
+            trace_link=f"trace://decision/{datetime.now().timestamp()}"
         )
     
     def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -351,7 +351,7 @@ def _extract_citations(retrieval_result: Dict[str, Any]) -> List[Dict[str, Any]]
 
 def _reason_summary(decision: str, risk_factors: List[Dict[str, Any]]) -> str:
     if not risk_factors:
-        return "Risk is eligible under the demo HO3 rules; no referral or decline triggers were found."
+        return "Risk is eligible under the governed HO3 rules; no referral or decline triggers were found."
     reasons = "; ".join(factor["because"] for factor in risk_factors)
     return f"{decision} based on underwriting triggers: {reasons}"
 

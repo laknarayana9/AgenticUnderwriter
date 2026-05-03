@@ -206,14 +206,14 @@ def _build_quote_response(workflow_state: WorkflowState, run_id: str) -> QuoteRu
 
 
 def _extract_submission_payload(request: Dict[str, Any]) -> Dict[str, Any]:
-    """Accept both wrapped and direct JSON payloads for demo/backward compatibility."""
+    """Accept both wrapped and direct JSON payloads for compatibility."""
     if "submission" in request and isinstance(request["submission"], dict):
         return request["submission"]
     return request
 
 
 def _normalize_ho3_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize older demo payloads into the canonical HO3 schema."""
+    """Normalize older payloads into the canonical HO3 schema."""
     risk = dict(payload.get("risk", {}))
     coverage = dict(payload.get("coverage_request", {}))
 
