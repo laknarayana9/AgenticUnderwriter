@@ -260,6 +260,36 @@ underwriting controls.
   and producer-facing explanations. Keep deterministic rule evaluation as the
   governed decision layer.
 
+## Project Status & Future AI Work
+
+This is an active portfolio project. The current version demonstrates governed
+workflow orchestration, deterministic underwriting controls, RAG-backed
+citations, structured LLM output boundaries, auditability, HITL routing, and a
+labeled eval harness. Upcoming versions are planned to add deeper AI engineering
+capabilities while preserving deterministic rules as the governed source of
+truth for eligibility decisions:
+
+- **Constrained LLM tool orchestration:** add a bounded tool loop where an LLM
+  can choose approved workflow tools such as rule evaluation, guideline
+  retrieval, follow-up generation, and rationale drafting. The loop will use
+  schema-validated tool calls, max-step limits, tracing, and deterministic
+  fallback behavior.
+- **LLM-as-judge evaluation:** extend the eval harness with rubric-based
+  provider-backed scoring for rationale clarity, citation faithfulness,
+  completeness, and producer readability, alongside the existing deterministic
+  metrics.
+- **Production-grade semantic embeddings:** add and document a real embedding
+  provider path, such as sentence-transformers or provider-hosted embeddings,
+  with measured retrieval recall@k against labeled gold citations.
+- **Streamlit or Gradio demo:** add an interactive demo for loading/editing
+  submissions, running the workflow, viewing ordered events, inspecting
+  citations next to rationale, and reviewing audit/HITL status.
+- **Autonomous AI underwriting agent research:** explore autonomous agent
+  patterns for non-binding underwriting assistance, such as evidence gathering,
+  document extraction, and follow-up planning. This will remain separate from
+  the governed eligibility decision layer unless explicit human and rule-based
+  controls are satisfied.
+
 ## Scenario Coverage
 
 The one-command walkthrough uses `examples/demo_submissions.json`. The product
