@@ -63,6 +63,27 @@ python scripts/compare_retrieval.py --query "high wildfire risk roof age referra
 The comparison CLI prints lexical, semantic, and hybrid results side by side
 with source document, score, chunk ID, and snippet.
 
+Run the labeled workflow eval harness:
+
+```bash
+python -m evals.run --dataset evals/datasets/ho3_labeled.jsonl
+```
+
+The eval dataset contains 30+ HO3 submissions with expected decisions, reason
+codes, and gold citation chunk IDs. The runner reports decision accuracy,
+reason-code exact match, retrieval recall@k, and optional rationale quality:
+
+```bash
+python -m evals.run \
+  --dataset evals/datasets/ho3_labeled.jsonl \
+  --include-llm-rationale-quality \
+  --min-decision-accuracy 1.0 \
+  --min-retrieval-recall 0.75
+```
+
+Exit code `0` means configured thresholds passed, `1` means metric thresholds
+failed, and `2` means the dataset or eval run could not be loaded.
+
 ## Retrieval Config
 
 Lexical retrieval is the default and fallback. Semantic and hybrid retrieval use
@@ -252,7 +273,8 @@ python -m pytest
 
 These tests cover quote contracts, missing-info resume, review queue actions,
 explicit rule triggers, lexical and semantic RAG behavior, fallback retrieval,
-rating sanity checks, and end-to-end underwriting scenarios.
+eval harness behavior, rating sanity checks, and end-to-end underwriting
+scenarios.
 
 ## Traceability
 
