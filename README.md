@@ -1,12 +1,16 @@
 # Agentic Underwriter
 
-Evidence-backed HO3 quote underwriting platform.
+A governed agentic workflow that turns a homeowner-insurance application into a
+cited `ACCEPT` / `REFER` / `DECLINE` decision, with human-in-the-loop review.
+
+**Portfolio proof points:** 32 labeled eval cases, 100% decision accuracy, 100%
+reason-code match, 100% retrieval recall@5, and 30 passing product tests.
 
 This repo demonstrates a compact quote-to-underwrite workflow for homeowners
-submissions. It is built to show the product loop reviewers care about:
-normalize an intake, identify missing or uncertain facts, ask targeted follow-up
-questions, resume the same quote run, produce a decision packet, and route
-referrals to a human review queue.
+submissions, including HO3 homeowners policies. It is built to show the product
+loop reviewers care about: normalize an intake, identify missing or uncertain
+facts, ask targeted follow-up questions, resume the same quote run, produce a
+decision packet, and route referrals to a human review queue.
 
 Architecture note: deterministic underwriting rules remain the governed source
 of truth for eligibility decisions. AI components assist with retrieval,
@@ -29,6 +33,27 @@ orchestration around the decisioning layer.
   hybrid guideline retrieval.
 - Structured LLM service boundary for producer-facing rationale and
   missing-info wording, with Pydantic validation and deterministic fallback.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A["HO3 / homeowner application"] --> B["Intake normalizer"]
+    B --> C{"Missing facts?"}
+    C -->|Yes| D["Follow-up questions"]
+    D --> E["Same-run resume"]
+    E --> B
+    C -->|No| F["Planner / router"]
+    F --> G["Risk enrichment"]
+    G --> H["Guideline retrieval"]
+    H --> I["Rule-based assessment"]
+    I --> J["Verifier guardrail"]
+    J --> K["Rating"]
+    K --> L["Decision packet"]
+    L --> M{"Human review needed?"}
+    M -->|Yes| N["HITL review queue"]
+    M -->|No| O["Completed quote"]
+```
 
 ## Run
 
@@ -260,35 +285,14 @@ underwriting controls.
   and producer-facing explanations. Keep deterministic rule evaluation as the
   governed decision layer.
 
-## Project Status & Future AI Work
+## Roadmap
 
-This is an active portfolio project. The current version demonstrates governed
-workflow orchestration, deterministic underwriting controls, RAG-backed
-citations, structured LLM output boundaries, auditability, HITL routing, and a
-labeled eval harness. Upcoming versions are planned to add deeper AI engineering
-capabilities while preserving deterministic rules as the governed source of
-truth for eligibility decisions:
-
-- **Constrained LLM tool orchestration:** add a bounded tool loop where an LLM
-  can choose approved workflow tools such as rule evaluation, guideline
-  retrieval, follow-up generation, and rationale drafting. The loop will use
-  schema-validated tool calls, max-step limits, tracing, and deterministic
-  fallback behavior.
-- **LLM-as-judge evaluation:** extend the eval harness with rubric-based
-  provider-backed scoring for rationale clarity, citation faithfulness,
-  completeness, and producer readability, alongside the existing deterministic
-  metrics.
-- **Production-grade semantic embeddings:** add and document a real embedding
-  provider path, such as sentence-transformers or provider-hosted embeddings,
-  with measured retrieval recall@k against labeled gold citations.
-- **Streamlit or Gradio demo:** add an interactive demo for loading/editing
-  submissions, running the workflow, viewing ordered events, inspecting
-  citations next to rationale, and reviewing audit/HITL status.
-- **Autonomous AI underwriting agent research:** explore autonomous agent
-  patterns for non-binding underwriting assistance, such as evidence gathering,
-  document extraction, and follow-up planning. This will remain separate from
-  the governed eligibility decision layer unless explicit human and rule-based
-  controls are satisfied.
+- Add a Streamlit or Gradio demo for editing submissions, running the workflow,
+  and inspecting citations, rationale, audit events, and HITL status.
+- Add production-grade embedding providers and LLM-as-judge rationale evals
+  alongside the existing deterministic retrieval and workflow metrics.
+- Explore constrained LLM tool orchestration for non-binding assistance, while
+  keeping deterministic rules as the governed eligibility decision layer.
 
 ## Scenario Coverage
 
