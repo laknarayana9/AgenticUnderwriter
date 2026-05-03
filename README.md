@@ -34,6 +34,8 @@ orchestration around the decisioning layer.
   hybrid guideline retrieval.
 - Structured LLM service boundary for producer-facing rationale and
   missing-info wording, with Pydantic validation and deterministic fallback.
+- Streamlit demo for editing submissions, running the workflow, viewing
+  citations, and inspecting audit/HITL status.
 
 ## Architecture
 
@@ -66,6 +68,20 @@ uvicorn app.main:app --reload
 ```
 
 The API will be available at `http://localhost:8000`.
+
+## Interactive Demo
+
+Run the Streamlit demo locally:
+
+```bash
+pip install -r requirements.txt -r requirements-demo.txt
+streamlit run demo_app.py
+```
+
+The demo loads sample homeowner submissions, lets you edit the JSON payload,
+runs the workflow in-process, and shows the final decision packet, rationale,
+reason codes, citations, premium indication, audit events, and follow-up
+questions when more information is required.
 
 ## One-Command Walkthrough
 
@@ -288,8 +304,6 @@ underwriting controls.
 
 ## Roadmap
 
-- Add a Streamlit or Gradio demo for editing submissions, running the workflow,
-  and inspecting citations, rationale, audit events, and HITL status.
 - Add production-grade embedding providers and LLM-as-judge rationale evals
   alongside the existing deterministic retrieval and workflow metrics.
 - Explore constrained LLM tool orchestration for non-binding assistance, while

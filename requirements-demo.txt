@@ -1,0 +1,2 @@
+# Optional interactive portfolio demo
+streamlit>=1.37.0
