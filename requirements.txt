@@ -1,26 +1,28 @@
-# Core FastAPI dependencies (Python 3.13 compatible)
+# API runtime
 fastapi>=0.104.0
+gunicorn>=21.2.0
+python-multipart>=0.0.6
 uvicorn[standard]>=0.24.0
+
+# Data and validation
+numpy>=1.26.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
-python-multipart>=0.0.6
-
-# Basic utilities
 python-dotenv>=1.0.0
-click>=8.1.0
-rich>=13.7.0
-numpy>=1.26.0
-pytest>=8.0.0
-httpx>=0.25.0
+
+# AI provider boundary
 openai>=1.30.0
 
-# Optional: Uncomment as needed for specific features
-# redis>=5.0.0  # For caching
-# requests>=2.31.0  # For HTTP requests
-# httpx>=0.25.0  # For async HTTP
-# psutil>=5.9.0  # For system monitoring
-# prometheus-client>=0.17.0  # For metrics
-gunicorn>=21.2.0  # For production server
+# CLI, tests, and API clients
+click>=8.1.0
+httpx>=0.25.0
+pytest>=8.0.0
+rich>=13.7.0
 
-# Note: Some packages (chromadb, sentence-transformers, etc.) 
-# may need manual installation due to Python 3.13 compatibility
+# Optional production adapters:
+# chromadb>=0.5.0                 # Persistent vector store for sentence-transformer retrieval
+# opentelemetry-api>=1.24.0       # Trace export adapter
+# opentelemetry-sdk>=1.24.0       # Trace provider/exporter configuration
+# prometheus-client>=0.17.0       # Metrics endpoint integration
+# redis>=5.0.0                    # Queue/cache backing services
+# sentence-transformers>=2.6.0    # Local embedding model provider

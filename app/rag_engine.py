@@ -16,26 +16,6 @@ from datetime import datetime
 
 import numpy as np
 
-try:
-    import chromadb
-    from chromadb.config import Settings
-    CHROMA_AVAILABLE = True
-except Exception as e:
-    chromadb = None
-    Settings = None
-    CHROMA_AVAILABLE = False
-    print(f"chromadb load failed: {e}")
-    print("Warning: ChromaDB not available, using in-memory lexical retrieval")
-
-# Try to import sentence transformers for embeddings
-try:
-    from sentence_transformers import SentenceTransformer
-    EMBEDDINGS_AVAILABLE = True
-except Exception as e:
-    EMBEDDINGS_AVAILABLE = False
-    print(f"sentence-transformers load failed: {e}")
-    print("Warning: sentence-transformers not available, using mock embeddings")
-
 from models.schemas import RetrievalChunk
 
 logger = logging.getLogger(__name__)
@@ -139,8 +119,10 @@ class SentenceTransformerEmbeddingProvider(EmbeddingProvider):
     """Optional local sentence-transformers provider when installed."""
 
     def __init__(self, model_name: str):
-        if not EMBEDDINGS_AVAILABLE:
-            raise RuntimeError("sentence-transformers is not installed")
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:
+            raise RuntimeError("sentence-transformers is not installed") from exc
         self.model_name = model_name
         self.model = SentenceTransformer(model_name)
 
@@ -212,13 +194,8 @@ class RAGEngine:
 
         self.client = None
         self.collection = None
-        use_chroma = (
-            CHROMA_AVAILABLE
-            and self.config.embeddings_enabled
-            and self.embedding_provider is not None
-            and self.config.embedding_model.startswith("sentence-transformers:")
-        )
-        if use_chroma:
+        if self._should_use_chroma():
+            chromadb, Settings = _load_chromadb()
             self.client = chromadb.PersistentClient(
                 path=chroma_path,
                 settings=Settings(anonymized_telemetry=False)
@@ -238,6 +215,20 @@ class RAGEngine:
             logger.info("Using lexical retrieval; enable embeddings for semantic/hybrid retrieval")
         else:
             logger.info("Embedding provider initialized: %s", self.embedding_provider.model_name)
+
+    def _should_use_chroma(self) -> bool:
+        if not (
+            self.config.embeddings_enabled
+            and self.embedding_provider is not None
+            and self.config.embedding_model.startswith("sentence-transformers:")
+        ):
+            return False
+        try:
+            _load_chromadb()
+            return True
+        except RuntimeError as exc:
+            logger.info("ChromaDB unavailable; using in-memory retrieval: %s", exc)
+            return False
         
     @property
     def embeddings_available(self) -> bool:
@@ -864,3 +855,12 @@ def get_rag_engine() -> RAGEngine:
     if _rag_engine_instance is None:
         _rag_engine_instance = RAGEngine()
     return _rag_engine_instance
+
+
+def _load_chromadb():
+    try:
+        import chromadb
+        from chromadb.config import Settings
+    except ImportError as exc:
+        raise RuntimeError("chromadb is not installed") from exc
+    return chromadb, Settings

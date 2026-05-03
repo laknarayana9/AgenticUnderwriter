@@ -34,6 +34,7 @@ orchestration around the decisioning layer.
 
 ```bash
 pip install -r requirements.txt
+cp .env.example .env
 python -m pytest
 uvicorn app.main:app --reload
 ```
@@ -99,6 +100,14 @@ EMBEDDING_MODEL=hashing-underwriting-v1
 To experiment with sentence-transformers, install the optional package
 and set `EMBEDDING_MODEL=sentence-transformers:all-MiniLM-L6-v2`. If embeddings
 are unavailable, semantic and hybrid modes fall back to lexical retrieval.
+
+## Configuration
+
+Copy `.env.example` to `.env` for local configuration. The defaults run the
+governed workflow with lexical retrieval, deterministic fallback wording, and
+in-process trace recording. Enable semantic retrieval, provider-backed
+structured LLM output, or OpenTelemetry export by changing the relevant
+environment variables rather than editing workflow code.
 
 ## Structured LLM Output
 
@@ -278,9 +287,13 @@ scenarios.
 
 ## Traceability
 
-`observability.py` provides a lightweight trace adapter for span-like attributes
-and latency. Decision packets include trace references, and the adapter boundary
-is ready for an OpenTelemetry or Phoenix-backed implementation.
+`observability.py` provides a tracer abstraction with completed span records,
+attributes, status, timing, and exporter boundaries. The default `memory`
+backend records spans in-process for tests and audit inspection; `logging`
+emits structured span records to application logs; `otel` routes spans through
+OpenTelemetry when the host environment provides the SDK configuration.
+Decision packets include trace references so workflow output can be joined to
+span data.
 
 ## Production Hardening Roadmap
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_serializer
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
@@ -188,22 +188,18 @@ class Decision(BaseModel):
 
 
 class ToolCall(BaseModel):
-    model_config = ConfigDict(json_encoders={
-        datetime: lambda v: v.isoformat()
-    })
-    
     tool_name: str
     input_data: Dict[str, Any]
     output_data: Dict[str, Any]
     timestamp: datetime
     execution_time_ms: Optional[int] = None
 
+    @field_serializer("timestamp", when_used="json")
+    def serialize_timestamp(self, value: datetime) -> str:
+        return value.isoformat()
+
 
 class WorkflowState(BaseModel):
-    model_config = ConfigDict(json_encoders={
-        datetime: lambda v: v.isoformat()
-    })
-
     # Original fields for backward compatibility
     quote_submission: QuoteSubmission
     enrichment_result: Optional[EnrichmentResult] = None
@@ -253,10 +249,6 @@ class WorkflowState(BaseModel):
 
 
 class RunRecord(BaseModel):
-    model_config = ConfigDict(json_encoders={
-        datetime: lambda v: v.isoformat()
-    })
-    
     run_id: str
     created_at: datetime
     updated_at: datetime
@@ -264,6 +256,10 @@ class RunRecord(BaseModel):
     workflow_state: WorkflowState
     node_outputs: Dict[str, Any] = Field(default_factory=dict)
     error_message: Optional[str] = None
+
+    @field_serializer("created_at", "updated_at", when_used="json")
+    def serialize_timestamps(self, value: datetime) -> str:
+        return value.isoformat()
 
 
 # API Response Models
@@ -297,10 +293,6 @@ class RunListResponse(BaseModel):
     total_count: int
 
 class HumanReviewRecord(BaseModel):
-    model_config = ConfigDict(json_encoders={
-        datetime: lambda v: v.isoformat()
-    })
-    
     run_id: str
     status: str  # e.g., "pending_review", "human_approved"
     requires_human_review: bool = True
@@ -315,12 +307,12 @@ class HumanReviewRecord(BaseModel):
     submission_timestamp: Optional[datetime] = None
     review_deadline: Optional[datetime] = None
 
+    @field_serializer("review_timestamp", "submission_timestamp", "review_deadline", when_used="json")
+    def serialize_optional_timestamps(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
+
 
 class QuoteRecord(BaseModel):
-    model_config = ConfigDict(json_encoders={
-        datetime: lambda v: v.isoformat()
-    })
-    
     run_id: str
     status: str  # e.g., "completed", "processing"
     timestamp: datetime
@@ -334,3 +326,7 @@ class QuoteRecord(BaseModel):
     human_review_details: Optional[Dict[str, Any]] = None
     required_questions: Optional[List[Dict[str, Any]]] = None
     citations: Optional[List[Dict[str, Any]]] = None
+
+    @field_serializer("timestamp", when_used="json")
+    def serialize_timestamp(self, value: datetime) -> str:
+        return value.isoformat()
