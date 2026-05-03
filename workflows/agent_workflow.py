@@ -22,7 +22,7 @@ from workflows.agents import (
 )
 from workflows.hitl import get_hitl_workflow
 from app.rag_engine import RAGEngine
-from tools import RatingTool
+from app.rating import RatingTool
 
 
 class PhaseAWorkflow:
@@ -240,11 +240,11 @@ class PhaseAWorkflow:
                 # Step 8: Decision Packaging
                 with tracer.start_as_current_span("decision_packaging"):
                     workflow_state.current_node = "decision_packaging"
-                    tool_calls_summary = self._extract_tool_calls(workflow_state)
+                    workflow_steps_summary = self._summarize_completed_workflow_steps(workflow_state)
                     decision_packet = self.decision_packager.package(
                         assessment_result,
                         rating_result,
-                        tool_calls_summary
+                        workflow_steps_summary
                     )
                     workflow_state.decision_packet = decision_packet
 
@@ -533,19 +533,19 @@ class PhaseAWorkflow:
             "construction_year": submission.risk.year_built
         }
 
-    def _extract_tool_calls(self, workflow_state: WorkflowState) -> list:
-        """Extract tool calls from workflow state."""
-        tool_calls = []
+    def _summarize_completed_workflow_steps(self, workflow_state: WorkflowState) -> list:
+        """Summarize completed workflow steps for audit-facing decision packets."""
+        completed_steps = []
         
         if workflow_state.enrichment:
-            tool_calls.append({
+            completed_steps.append({
                 "tool": "enrichment_agent",
                 "timestamp": datetime.now().isoformat(),
                 "status": "completed"
             })
         
         if workflow_state.retrieval:
-            tool_calls.append({
+            completed_steps.append({
                 "tool": "retrieval_agent",
                 "timestamp": datetime.now().isoformat(),
                 "status": "completed",
@@ -553,20 +553,20 @@ class PhaseAWorkflow:
             })
         
         if workflow_state.assessment:
-            tool_calls.append({
+            completed_steps.append({
                 "tool": "underwriting_assessor",
                 "timestamp": datetime.now().isoformat(),
                 "status": "completed"
             })
         
         if workflow_state.verification:
-            tool_calls.append({
+            completed_steps.append({
                 "tool": "verifier_guardrail",
                 "timestamp": datetime.now().isoformat(),
                 "status": "completed"
             })
         
-        return tool_calls
+        return completed_steps
 
 
 def run_agent_workflow(submission_raw: Dict[str, Any]) -> WorkflowState:

@@ -8,6 +8,8 @@ from models.schemas import RunRecord, WorkflowState, HumanReviewRecord, QuoteRec
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DB_PATH = Path(__file__).resolve().parent / "underwriting.db"
+
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -21,8 +23,9 @@ class UnderwritingDB:
     SQLite database for storing underwriting run records.
     """
     
-    def __init__(self, db_path: str = "storage/underwriting.db"):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = Path(db_path).expanduser() if db_path else DEFAULT_DB_PATH
+        self.db_path = self.db_path.resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"🗄️ Initializing database at {self.db_path}")
         self.init_db()

@@ -4,7 +4,7 @@ from app.rag_engine import (
     RETRIEVAL_MODE_LEXICAL,
     RETRIEVAL_MODE_SEMANTIC,
 )
-from tools import RatingTool
+from app.rating import RatingTool
 
 
 def test_rag_lexical_fallback_retrieves_citable_guidelines(tmp_path):

@@ -3,8 +3,9 @@
 A governed agentic workflow that turns a homeowner-insurance application into a
 cited `ACCEPT` / `REFER` / `DECLINE` decision, with human-in-the-loop review.
 
-**Portfolio proof points:** 32 labeled eval cases, 100% decision accuracy, 100%
-reason-code match, 100% retrieval recall@5, and 30 passing product tests.
+**Portfolio proof points:** CI-gated evals across 32 labeled cases with 100%
+decision accuracy, 100% reason-code match, 100% retrieval recall@5, and 30
+passing product tests.
 
 This repo demonstrates a compact quote-to-underwrite workflow for homeowners
 submissions, including HO3 homeowners policies. It is built to show the product

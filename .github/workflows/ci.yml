@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-and-evaluate:
+    name: Test and eval gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run product tests
+        run: python -m pytest
+
+      - name: Run labeled underwriting eval gate
+        run: >-
+          python -m evals.run
+          --dataset evals/datasets/ho3_labeled.jsonl
+          --json
+          --min-decision-accuracy 1.0
+          --min-reason-code-match 1.0
+          --min-retrieval-recall 1.0
+
+      - name: Smoke test retrieval comparison CLI
+        run: >-
+          python scripts/compare_retrieval.py
+          --query "high wildfire risk roof age referral"
+          --limit 3
