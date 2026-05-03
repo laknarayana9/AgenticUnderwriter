@@ -169,6 +169,11 @@ def _build_quote_response(workflow_state: WorkflowState, run_id: str) -> QuoteRu
             "citations": workflow_state.decision_packet.citations,
             "review_reason_codes": workflow_state.decision_packet.review_reason_codes,
             "next_steps": workflow_state.decision_packet.next_steps,
+            "producer_rationale": (
+                workflow_state.decision_packet.producer_rationale.model_dump()
+                if workflow_state.decision_packet.producer_rationale
+                else None
+            ),
         }
         premium_dict = workflow_state.decision_packet.premium_indication
         citations = workflow_state.decision_packet.citations

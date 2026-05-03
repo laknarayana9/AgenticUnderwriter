@@ -12,10 +12,10 @@ rich>=13.7.0
 numpy>=1.26.0
 pytest>=8.0.0
 httpx>=0.25.0
+openai>=1.30.0
 
 # Optional: Uncomment as needed for specific features
 # redis>=5.0.0  # For caching
-# openai>=1.3.0  # For LLM integration
 # requests>=2.31.0  # For HTTP requests
 # httpx>=0.25.0  # For async HTTP
 # psutil>=5.9.0  # For system monitoring

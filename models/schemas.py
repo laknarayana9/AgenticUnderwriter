@@ -105,11 +105,44 @@ class RetrievalChunk(BaseModel):
     effective_date: Optional[str] = Field(None, description="Effective date of the guideline")
 
 
+class ProducerRationaleOutput(BaseModel):
+    """Validated producer-facing rationale generated after deterministic decisioning."""
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(..., min_length=1, max_length=800, description="Producer-facing explanation of the governed decision")
+    supporting_facts: List[str] = Field(default_factory=list, max_length=6, description="Key facts supporting the rationale")
+    citation_chunk_ids: List[str] = Field(default_factory=list, max_length=8, description="Evidence chunk IDs referenced by the rationale")
+    source: Literal["llm", "fallback"] = Field("fallback", description="Whether wording came from an LLM provider or fallback path")
+
+
+class MissingInfoQuestionOutput(BaseModel):
+    """Validated follow-up wording for missing or uncertain underwriting facts."""
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str = Field(..., min_length=1)
+    field_path: str = Field(..., min_length=1)
+    answer_key: Optional[str] = None
+    question_text: str = Field(..., min_length=1, max_length=300)
+    question_type: str = Field(..., min_length=1)
+    required: bool = True
+    options: Optional[List[str]] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+    source: Literal["llm", "fallback"] = "fallback"
+
+
+class MissingInfoQuestionBatch(BaseModel):
+    """Provider response wrapper for one or more missing-info questions."""
+    model_config = ConfigDict(extra="forbid")
+
+    questions: List[MissingInfoQuestionOutput] = Field(default_factory=list)
+
+
 class DecisionPacket(BaseModel):
     """Final decision packet suitable for producer-facing explanation, underwriter review, and audit"""
     decision: DecisionType
     decision_confidence: float = Field(..., ge=0, le=1, description="Confidence in the decision")
     reason_summary: str = Field(..., description="Concise summary of the decision rationale")
+    producer_rationale: Optional[ProducerRationaleOutput] = Field(None, description="Validated producer-facing rationale output")
     citations: List[Dict[str, Any]] = Field(default_factory=list, description="List of citation objects with chunk_id, section, doc_version")
     premium_indication: Optional[Dict[str, Any]] = Field(None, description="Premium indication with annual_premium, currency")
     needs_human_review: bool = Field(default=False, description="Whether human review is required")

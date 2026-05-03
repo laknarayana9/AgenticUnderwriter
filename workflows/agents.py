@@ -11,6 +11,7 @@ from app.underwriting_rules import (
     evaluate_underwriting_rules,
     findings_as_risk_factors,
 )
+from app.llm_service import StructuredLLMService
 from models.schemas import DecisionPacket, DecisionType, HO3Submission
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,10 @@ class BaseAgent:
 
 class IntakeNormalizerAgent(BaseAgent):
     """Intake normalization agent"""
+
+    def __init__(self, llm_service: Optional[StructuredLLMService] = None, prompt_version: str = "v1.0"):
+        super().__init__(prompt_version=prompt_version)
+        self.llm_service = llm_service or StructuredLLMService()
     
     def normalize(self, submission_data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize submission data"""
@@ -75,6 +80,16 @@ class IntakeNormalizerAgent(BaseAgent):
                 "numeric",
             ))
         
+        questions = self.llm_service.word_missing_info_questions(
+            questions,
+            submission_context={
+                "applicant": applicant,
+                "risk": risk,
+                "missing_info": missing_info,
+                "stage": "intake_normalization",
+            },
+        )
+
         return {
             "normalized_data": submission_data, 
             "status": "normalized",
@@ -254,6 +269,10 @@ class VerifierGuardrailAgent(BaseAgent):
 
 class DecisionPackagerAgent(BaseAgent):
     """Decision packager agent"""
+
+    def __init__(self, llm_service: Optional[StructuredLLMService] = None, prompt_version: str = "v1.0"):
+        super().__init__(prompt_version=prompt_version)
+        self.llm_service = llm_service or StructuredLLMService()
     
     def package(self, decision_data: Dict[str, Any], rating_data: Any, citations: List) -> DecisionPacket:
         """Package final decisions"""
@@ -270,16 +289,25 @@ class DecisionPackagerAgent(BaseAgent):
         next_steps = decision_data.get("next_steps")
         if not next_steps and decision_data.get("required_questions"):
             next_steps = ["Provide required information and resume this quote run."]
+        next_steps = next_steps or _next_steps(decision, review_codes)
+
+        fallback_summary = decision_data.get("reasoning", "Decision completed")
+        producer_rationale = self.llm_service.generate_producer_rationale(
+            decision_data=decision_data,
+            citations=evidence,
+            fallback_summary=fallback_summary,
+        )
 
         return DecisionPacket(
             decision=decision,
             decision_confidence=decision_data.get("confidence", 0.8),
-            reason_summary=decision_data.get("reasoning", "Decision completed"),
+            reason_summary=producer_rationale.summary,
+            producer_rationale=producer_rationale,
             citations=evidence,
             premium_indication=rating_data if isinstance(rating_data, dict) else {"annual_premium": rating_data, "currency": "USD"},
             needs_human_review=decision != DecisionType.ACCEPT,
             review_reason_codes=review_codes,
-            next_steps=next_steps or _next_steps(decision, review_codes),
+            next_steps=next_steps,
             facts_used=decision_data.get("facts_used", {}),
             evidence_cited=[citation.get("chunk_id", "") for citation in evidence if isinstance(citation, dict)],
             tool_calls_summary=citations if evidence is not citations else [],

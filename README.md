@@ -27,6 +27,8 @@ orchestration around the decisioning layer.
   citations, next steps, premium indication, facts used, and a trace reference.
 - Versioned deterministic underwriting rules backed by lexical, semantic, or
   hybrid guideline retrieval.
+- Structured LLM service boundary for producer-facing rationale and
+  missing-info wording, with Pydantic validation and deterministic fallback.
 
 ## Run
 
@@ -76,6 +78,27 @@ EMBEDDING_MODEL=hashing-underwriting-v1
 To experiment with sentence-transformers, install the optional package
 and set `EMBEDDING_MODEL=sentence-transformers:all-MiniLM-L6-v2`. If embeddings
 are unavailable, semantic and hybrid modes fall back to lexical retrieval.
+
+## Structured LLM Output
+
+LLM calls are intentionally narrow. Deterministic underwriting rules decide
+`ACCEPT`, `REFER`, or `DECLINE`; the LLM service can only assist with
+producer-facing rationale wording and missing-info follow-up wording after the
+workflow has already identified the decision or the required fields.
+
+```bash
+LLM_STRUCTURED_OUTPUT_ENABLED=true|false
+LLM_PROVIDER=openai|disabled
+LLM_MODEL=gpt-4o-mini
+OPENAI_API_KEY=...
+LLM_PROMPT_VERSION=structured-llm-v1
+```
+
+Set `LLM_STRUCTURED_OUTPUT_ENABLED=true` with an API key to enable provider
+calls. The `app/llm_service.py` provider wrapper sends prompt templates from
+`app/prompt_templates.py` and validates responses against Pydantic models before
+they enter the workflow state or decision packet. If no API key or provider is
+available, the same deterministic fallback wording is validated and used.
 
 ## Core API Flow
 
@@ -181,6 +204,10 @@ underwriting controls.
   retrieval so referral reasons, citations, and tests are stable. An LLM can be
   added for question wording, document extraction, query formulation, or
   summarization without becoming the source of truth for eligibility.
+- **LLM guardrails:** structured LLM output is constrained to two assistant
+  tasks: producer rationale and follow-up wording. Provider responses must pass
+  Pydantic validation, cannot alter question identifiers or answer contracts,
+  and never set the eligibility outcome.
 - **Auditability:** every run has a durable `run_id`; missing-info pauses,
   follow-up answers, review actions, node outputs, decision packets, and final
   outcomes are stored with the run. Human review decisions are recorded

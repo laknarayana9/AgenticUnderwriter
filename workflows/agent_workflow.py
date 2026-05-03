@@ -10,6 +10,7 @@ import time
 
 from models.schemas import HO3Submission, WorkflowState, QuoteSubmission
 from observability import get_tracer, record_workflow_latency
+from app.llm_service import StructuredLLMService
 from workflows.agents import (
     IntakeNormalizerAgent,
     PlannerRouterAgent,
@@ -31,14 +32,19 @@ class PhaseAWorkflow:
     """
 
     def __init__(self, db=None):
+        self.llm_service = StructuredLLMService()
+
         # Initialize agents
-        self.intake_normalizer = IntakeNormalizerAgent(prompt_version="v1.0")
+        self.intake_normalizer = IntakeNormalizerAgent(
+            llm_service=self.llm_service,
+            prompt_version="v1.0",
+        )
         self.planner_router = PlannerRouterAgent()
         self.enrichment_agent = EnrichmentAgent()
         self.retrieval_agent = None  # Will be initialized with RAG engine
         self.assessor_agent = UnderwritingAssessorAgent()
         self.verifier_agent = VerifierGuardrailAgent()
-        self.decision_packager = DecisionPackagerAgent()
+        self.decision_packager = DecisionPackagerAgent(llm_service=self.llm_service)
 
         # Initialize supporting services
         self.rag_engine = RAGEngine()
@@ -407,7 +413,15 @@ class PhaseAWorkflow:
                 },
             })
 
-        return questions
+        return self.llm_service.word_missing_info_questions(
+            questions,
+            submission_context={
+                "stage": "contextual_missing_info",
+                "applicant": submission.applicant.model_dump(),
+                "risk": submission.risk.model_dump(),
+                "hazard_profile": hazard_profile,
+            },
+        )
 
     def _apply_followup_answers(
         self,
