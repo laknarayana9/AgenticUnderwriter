@@ -69,6 +69,52 @@ uvicorn app.main:app --reload
 
 The API will be available at `http://localhost:8000`.
 
+## Modal Deployment
+
+Live API docs:
+[https://ln-tuttagunta--agentic-underwriter-fastapi-app-dev.modal.run/docs](https://ln-tuttagunta--agentic-underwriter-fastapi-app-dev.modal.run/docs)
+
+List runs endpoint docs:
+[https://ln-tuttagunta--agentic-underwriter-fastapi-app-dev.modal.run/docs#/default/list_runs_runs_get](https://ln-tuttagunta--agentic-underwriter-fastapi-app-dev.modal.run/docs#/default/list_runs_runs_get)
+
+Smoke test:
+
+```bash
+curl https://ln-tuttagunta--agentic-underwriter-fastapi-app-dev.modal.run/health
+```
+
+This repo includes a Modal ASGI entrypoint for the existing FastAPI app:
+
+```bash
+modal setup
+modal serve modal_app.py
+modal deploy modal_app.py
+```
+
+`modal_app.py` builds a Python 3.13 image from `requirements.txt`, includes the
+local application packages and underwriting guideline documents, mounts a
+durable Modal Volume at `/data`, and points SQLite at
+`sqlite:////data/underwriting.db`. The deployed endpoint serves the same API
+routes as local `uvicorn`; deterministic underwriting rules remain the governed
+decision layer. The Modal function is capped at one container because the
+portfolio deploy uses SQLite on a Modal Volume; move `DATABASE_URL` to a managed
+database before raising container count for higher write concurrency.
+
+Useful Modal knobs:
+
+```bash
+MODAL_APP_NAME=agentic-underwriter
+MODAL_DATA_VOLUME=agentic-underwriter-data
+```
+
+Structured LLM output is disabled by default for deploy parity. Enable it with a
+Modal Secret or environment variables only when you want provider-backed wording:
+
+```bash
+LLM_STRUCTURED_OUTPUT_ENABLED=true
+OPENAI_API_KEY=...
+```
+
 ## Interactive Demo
 
 Run the Streamlit demo locally:

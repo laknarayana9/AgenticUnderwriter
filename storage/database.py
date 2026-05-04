@@ -1,14 +1,41 @@
 import sqlite3
 import json
 import logging
+import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 from models.schemas import RunRecord, WorkflowState, HumanReviewRecord, QuoteRecord
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "underwriting.db"
+
+
+def _configured_db_path() -> Path:
+    explicit_path = os.getenv("UNDERWRITING_DB_PATH")
+    if explicit_path:
+        return Path(explicit_path).expanduser()
+
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        if database_url.startswith("sqlite:///"):
+            return Path(unquote(database_url.removeprefix("sqlite:///"))).expanduser()
+
+        parsed = urlparse(database_url)
+        if parsed.scheme and parsed.scheme != "sqlite":
+            raise ValueError("Only sqlite DATABASE_URL values are supported by the local storage adapter")
+        if parsed.scheme == "sqlite":
+            path = unquote(parsed.path)
+            if parsed.netloc:
+                path = f"//{parsed.netloc}{path}"
+            if not path:
+                raise ValueError("sqlite DATABASE_URL must include a database path")
+            return Path(path).expanduser()
+        return Path(database_url).expanduser()
+
+    return DEFAULT_DB_PATH
 
 
 class DateTimeEncoder(json.JSONEncoder):
@@ -24,7 +51,7 @@ class UnderwritingDB:
     """
     
     def __init__(self, db_path: Optional[str] = None):
-        self.db_path = Path(db_path).expanduser() if db_path else DEFAULT_DB_PATH
+        self.db_path = Path(db_path).expanduser() if db_path else _configured_db_path()
         self.db_path = self.db_path.resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"🗄️ Initializing database at {self.db_path}")
