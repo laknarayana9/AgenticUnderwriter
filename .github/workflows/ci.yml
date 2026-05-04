@@ -30,6 +30,12 @@ jobs:
       - name: Run product tests
         run: python -m pytest
 
+      - name: Regenerate labeled eval dataset
+        run: python -m evals.generate_dataset
+
+      - name: Verify generated eval dataset is committed
+        run: git diff --exit-code -- evals/datasets/ho3_labeled.jsonl
+
       - name: Run labeled underwriting eval gate
         run: >-
           python -m evals.run

@@ -3,7 +3,7 @@
 A governed agentic workflow that turns a homeowner-insurance application into a
 cited `ACCEPT` / `REFER` / `DECLINE` decision, with human-in-the-loop review.
 
-**Portfolio proof points:** CI-gated evals across 32 labeled cases with 100%
+**Portfolio proof points:** CI-gated evals across 196 stratified cases with 100%
 decision accuracy, 100% reason-code match, 100% retrieval recall@5, and 30
 passing product tests.
 
@@ -106,22 +106,49 @@ python scripts/compare_retrieval.py --query "high wildfire risk roof age referra
 The comparison CLI prints lexical, semantic, and hybrid results side by side
 with source document, score, chunk ID, and snippet.
 
-Run the labeled workflow eval harness:
+Generate and run the labeled workflow eval harness:
 
 ```bash
+python -m evals.generate_dataset
 python -m evals.run --dataset evals/datasets/ho3_labeled.jsonl
 ```
 
-The eval dataset contains 30+ HO3 submissions with expected decisions, reason
-codes, and gold citation chunk IDs. The runner reports decision accuracy,
-reason-code exact match, retrieval recall@k, and optional rationale quality:
+The eval dataset contains 196 stratified HO3 submissions with expected
+decisions, reason codes, workflow statuses, and gold citation chunk IDs. The
+runner reports decision accuracy, reason-code exact match, retrieval recall@k,
+and optional rationale quality.
+
+Current CI-gated metrics:
+
+| Metric | Value |
+| --- | ---: |
+| Labeled cases | 196 |
+| Strata | 12 |
+| Decision accuracy | 100% |
+| Reason-code match | 100% |
+| Retrieval recall@5 | 100% |
+| Product tests | 30 passing |
+
+Coverage breakdown:
+
+| Outcome / status | Cases |
+| --- | ---: |
+| `ACCEPT` | 38 |
+| `REFER` | 127 |
+| `DECLINE` | 31 |
+| `completed` | 38 |
+| `pending_review` | 122 |
+| `waiting_for_info` | 36 |
+
+Run the same threshold gate used in CI:
 
 ```bash
 python -m evals.run \
   --dataset evals/datasets/ho3_labeled.jsonl \
-  --include-llm-rationale-quality \
+  --json \
   --min-decision-accuracy 1.0 \
-  --min-retrieval-recall 0.75
+  --min-reason-code-match 1.0 \
+  --min-retrieval-recall 1.0
 ```
 
 Exit code `0` means configured thresholds passed, `1` means metric thresholds

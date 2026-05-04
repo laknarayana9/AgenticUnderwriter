@@ -26,6 +26,7 @@ class ExpectedLabel(BaseModel):
 class EvalCase(BaseModel):
     id: str
     title: str
+    stratum: str = "unspecified"
     submission: Dict[str, Any]
     expected: ExpectedLabel
 

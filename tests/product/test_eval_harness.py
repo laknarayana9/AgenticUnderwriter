@@ -9,9 +9,12 @@ DATASET = Path("evals/datasets/ho3_labeled.jsonl")
 
 def test_eval_dataset_has_portfolio_scale_labels():
     cases = load_dataset(DATASET)
+    strata = {case.stratum for case in cases}
 
-    assert len(cases) >= 30
+    assert len(cases) >= 150
+    assert len(strata) >= 10
     assert all(case.expected.decision in {"ACCEPT", "REFER", "DECLINE"} for case in cases)
+    assert {"completed", "pending_review", "waiting_for_info"}.issubset({case.expected.status for case in cases})
     assert any(case.expected.gold_citations for case in cases)
 
 
