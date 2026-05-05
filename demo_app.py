@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 
 import streamlit as st
 
-from workflows.agent_workflow import PhaseAWorkflow
+from workflows.agent_workflow import UnderwritingWorkflow
 
 
 ROOT = Path(__file__).resolve().parent
@@ -22,9 +22,9 @@ SAMPLES_PATH = ROOT / "examples" / "demo_submissions.json"
 
 
 @st.cache_resource
-def get_workflow() -> PhaseAWorkflow:
+def get_workflow() -> UnderwritingWorkflow:
     with redirect_stdout(StringIO()):
-        return PhaseAWorkflow()
+        return UnderwritingWorkflow()
 
 
 @st.cache_data

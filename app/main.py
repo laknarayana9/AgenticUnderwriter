@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 
 from models.schemas import DecisionType, HumanReviewRecord, QuoteSubmission, RunRecord, WorkflowState, HO3Submission
-from workflows.agent_workflow import PhaseAWorkflow
+from workflows.agent_workflow import UnderwritingWorkflow
 from storage.database import db
 
 # Initialize FastAPI app
@@ -430,7 +430,7 @@ async def run_quote_processing(request: Dict[str, Any]):
 
     try:
         # Use 7-agent system for all processing
-        workflow_state = PhaseAWorkflow(db=db).run(quote_submission.model_dump())
+        workflow_state = UnderwritingWorkflow(db=db).run(quote_submission.model_dump())
         
         # Store the run record
         run_id = store_run_record(workflow_state)
@@ -450,13 +450,12 @@ async def run_quote_processing(request: Dict[str, Any]):
 @app.post("/quote/ho3", response_model=QuoteRunResponse)
 async def run_ho3_quote_processing(request: Dict[str, Any]):
     """
-    Process an HO3 submission through the Phase A workflow with 7 specialized agents.
+    Process an HO3 submission through the governed underwriting workflow.
     """
     submission_payload = _normalize_ho3_payload(_extract_submission_payload(request))
 
     try:
-        # Run Phase A workflow
-        workflow_state = PhaseAWorkflow(db=db).run(submission_payload)
+        workflow_state = UnderwritingWorkflow(db=db).run(submission_payload)
         
         # Store the run record
         run_id = store_run_record(workflow_state)
@@ -515,7 +514,7 @@ async def answer_missing_info(run_id: str, request: MissingInfoAnswerRequest):
     open_task = db.get_open_hitl_task_for_run(run_id)
 
     try:
-        workflow = PhaseAWorkflow(db=db)
+        workflow = UnderwritingWorkflow(db=db)
         workflow_state = workflow.resume(run_record.workflow_state, request.answers)
         resumed_run_id = store_run_record(workflow_state, status=workflow_state.status)
 

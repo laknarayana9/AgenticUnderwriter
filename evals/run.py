@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from pydantic import BaseModel, Field, ValidationError
 
-from workflows.agent_workflow import PhaseAWorkflow
+from workflows.agent_workflow import UnderwritingWorkflow
 
 
 class ExpectedLabel(BaseModel):
@@ -84,11 +84,11 @@ def evaluate_cases(
     *,
     k: int = 5,
     include_rationale_quality: bool = False,
-    workflow: Optional[PhaseAWorkflow] = None,
+    workflow: Optional[UnderwritingWorkflow] = None,
 ) -> EvalReport:
     if workflow is None:
         with contextlib.redirect_stdout(io.StringIO()):
-            workflow = PhaseAWorkflow()
+            workflow = UnderwritingWorkflow()
     results = [
         _evaluate_case(
             workflow,
@@ -102,7 +102,7 @@ def evaluate_cases(
 
 
 def _evaluate_case(
-    workflow: PhaseAWorkflow,
+    workflow: UnderwritingWorkflow,
     case: EvalCase,
     *,
     k: int,

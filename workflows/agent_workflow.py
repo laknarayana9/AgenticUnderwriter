@@ -1,6 +1,8 @@
 """
-Phase A Workflow using 7 Specialized Agents
-Implements the canonical HO3 underwriting workflow with the new agent contracts.
+Governed underwriting workflow using specialized agent role boundaries.
+
+Implements the canonical HO3 quote-to-underwrite flow with deterministic
+eligibility decisioning, cited evidence, pause/resume, rating, and HITL review.
 """
 import uuid
 from copy import deepcopy
@@ -25,10 +27,9 @@ from app.rag_engine import RAGEngine
 from app.rating import RatingTool
 
 
-class PhaseAWorkflow:
+class UnderwritingWorkflow:
     """
-    Phase A workflow using the 7 specialized agents.
-    Implements the canonical HO3 underwriting flow.
+    Governed HO3 underwriting workflow using specialized agent role boundaries.
     """
 
     def __init__(self, db=None):
@@ -57,7 +58,7 @@ class PhaseAWorkflow:
 
     def run(self, submission_raw: Dict[str, Any]) -> WorkflowState:
         """
-        Run the Phase A workflow with a raw HO3 submission.
+        Run the underwriting workflow with a raw HO3 submission.
         """
         return self._run(submission_raw)
 
@@ -100,13 +101,13 @@ class PhaseAWorkflow:
         additional_answers: Optional[Dict[str, Any]] = None,
     ) -> WorkflowState:
         """
-        Run or resume the Phase A workflow with a raw HO3 submission.
+        Run or resume the underwriting workflow with a raw HO3 submission.
         """
         submission_raw = self._ensure_ho3_raw(submission_raw)
-        tracer = get_tracer("phase_a_workflow")
+        tracer = get_tracer("underwriting_workflow")
         workflow_start = time.time()
         
-        with tracer.start_as_current_span("phase_a_workflow_execution") as span:
+        with tracer.start_as_current_span("underwriting_workflow_execution") as span:
             # Generate run ID
             run_id = run_id or str(uuid.uuid4())
             quote_id = quote_id or f"Q-2026-{uuid.uuid4().hex[:6].upper()}"
@@ -276,7 +277,7 @@ class PhaseAWorkflow:
 
                 # Record workflow latency metric
                 workflow_duration = time.time() - workflow_start
-                record_workflow_latency("phase_a", workflow_duration * 1000)
+                record_workflow_latency("underwriting", workflow_duration * 1000)
                 span.set_attribute("workflow.duration_ms", workflow_duration * 1000)
                 span.set_attribute("workflow.status", workflow_state.status)
 
@@ -573,5 +574,5 @@ def run_agent_workflow(submission_raw: Dict[str, Any]) -> WorkflowState:
     """
     Convenience function to run the agent workflow.
     """
-    workflow = PhaseAWorkflow()
+    workflow = UnderwritingWorkflow()
     return workflow.run(submission_raw)

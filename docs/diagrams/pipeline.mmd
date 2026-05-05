@@ -1,0 +1,29 @@
+flowchart TD
+    Start([HO3 Submission]) --> Intake[Intake Normalizer]
+    Intake --> MissingCheck{Required facts<br/>missing?}
+    MissingCheck -->|Yes| Questions[Generate Targeted<br/>Follow-up Questions]
+    Questions --> Pause([Pause: waiting_for_info])
+    Pause -.->|Same-run resume| Intake
+    MissingCheck -->|No| Planner[Planner / Router]
+    Planner --> Enrichment[Risk Enrichment]
+    Enrichment --> ContextualCheck{Contextual info<br/>required?}
+    ContextualCheck -->|Yes| Questions
+    ContextualCheck -->|No| Retrieval[Guideline Retrieval<br/>lexical · semantic · hybrid]
+    Retrieval --> Assessment[Rule-Based Assessment<br/>UW-RULESET-2026.04]
+    Assessment --> Verifier[Verifier Guardrail]
+    Verifier --> Rating[Rating Engine]
+    Rating --> Packager[Decision Packager<br/>+ bounded LLM rationale]
+    Packager --> ReviewCheck{Human review<br/>required?}
+    ReviewCheck -->|Yes| HITL[HITL Review Queue]
+    HITL --> FinalReview([Final Decision])
+    ReviewCheck -->|No| FinalAuto([Completed Quote])
+
+    classDef llmBounded fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef deterministic fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef terminal fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
+    classDef pauseNode fill:#fff9c4,stroke:#f57f17,stroke-width:2px,color:#000
+
+    class Start,FinalAuto,FinalReview terminal
+    class Pause pauseNode
+    class Questions,Packager llmBounded
+    class Intake,Planner,Enrichment,Retrieval,Assessment,Verifier,Rating,HITL deterministic
