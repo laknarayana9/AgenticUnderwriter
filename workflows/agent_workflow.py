@@ -101,22 +101,21 @@ class UnderwritingWorkflow:
         additional_answers: Optional[Dict[str, Any]] = None,
     ) -> WorkflowState:
         """
-        Run or resume the underwriting workflow with a raw HO3 submission.
+        Shared implementation for run() and resume(). Accepts optional prior_events
+        and additional_answers to support mid-workflow resumption.
         """
         submission_raw = self._ensure_ho3_raw(submission_raw)
         tracer = get_tracer("underwriting_workflow")
         workflow_start = time.time()
         
         with tracer.start_as_current_span("underwriting_workflow_execution") as span:
-            # Generate run ID
             run_id = run_id or str(uuid.uuid4())
             quote_id = quote_id or f"Q-2026-{uuid.uuid4().hex[:6].upper()}"
 
             span.set_attribute("run_id", run_id)
             span.set_attribute("quote_id", quote_id)
 
-            # Initialize workflow state
-            # For backward compatibility, create a QuoteSubmission from the HO3 data
+            # QuoteSubmission is retained for backward compat with storage/response serialization
             quote_submission = self._convert_to_quote_submission(submission_raw)
             
             workflow_state = WorkflowState(
@@ -146,13 +145,11 @@ class UnderwritingWorkflow:
                         workflow_state.missing_info
                     )
 
-                # Check if waiting for info
                 if routing_decision["route"] == "waiting_for_info":
                     return self._pause_for_missing_info(workflow_state, normalization_result["questions"])
 
                 workflow_state.submission_canonical = HO3Submission(**submission_raw)
 
-                # Check for hard decline or refer candidates - create decision packets
                 if routing_decision["route"] in ["hard_decline_candidate", "hard_refer"]:
                     workflow_state.status = "pending_review"
                     decision_type = "DECLINE" if routing_decision["route"] == "hard_decline_candidate" else "REFER"
@@ -249,7 +246,6 @@ class UnderwritingWorkflow:
                     )
                     workflow_state.decision_packet = decision_packet
 
-                # Set final status
                 if decision_packet.needs_human_review:
                     workflow_state.status = "pending_review"
                     
@@ -268,14 +264,12 @@ class UnderwritingWorkflow:
                 else:
                     workflow_state.status = "completed"
 
-                # Log completion
                 workflow_state.events.append({
                     "event": "workflow_completed",
                     "timestamp": datetime.now().isoformat(),
                     "decision": decision_packet.decision.value
                 })
 
-                # Record workflow latency metric
                 workflow_duration = time.time() - workflow_start
                 record_workflow_latency("underwriting", workflow_duration * 1000)
                 span.set_attribute("workflow.duration_ms", workflow_duration * 1000)

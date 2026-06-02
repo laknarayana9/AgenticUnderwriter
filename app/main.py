@@ -1,14 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from pydantic import BaseModel, Field
+from typing import Dict, Any, Optional, List, Literal, Union
 import uuid
 import json
 from datetime import datetime
 
 from models.schemas import DecisionType, HumanReviewRecord, QuoteSubmission, RunRecord, WorkflowState, HO3Submission
-from workflows.agent_workflow import UnderwritingWorkflow
+from workflows import UnderwritingWorkflow
 from storage.database import db
+
+workflow = UnderwritingWorkflow(db=db)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -28,6 +30,51 @@ app.add_middleware(
 
 
 # Request/Response models
+class IntakeApplicant(BaseModel):
+    """Applicant fields accepted at intake, before missing-info follow-up."""
+    full_name: Optional[str] = Field(None, description="Full legal name of the applicant")
+    email: Optional[str] = Field(None, description="Email address")
+    phone: Optional[str] = Field(None, description="Phone number")
+
+
+class IntakeRiskProfile(BaseModel):
+    """Risk fields accepted at intake, before the workflow asks for missing facts."""
+    property_address: Optional[str] = Field(None, description="Full property address")
+    occupancy: Optional[Literal["owner_occupied_primary", "owner_occupied_secondary", "tenant_occupied", "vacant"]] = None
+    dwelling_type: Optional[Literal["single_family", "condo", "townhouse", "row_house", "manufactured", "commercial"]] = Field(
+        None,
+        description="Type of dwelling",
+    )
+    year_built: Optional[int] = Field(None, ge=1800, le=2026, description="Year property was built")
+    roof_age_years: Optional[int] = Field(None, ge=0, description="Age of roof in years")
+    construction_type: Optional[Literal["frame", "masonry", "superior_masonry", "fire_resistive", "manufactured"]] = None
+    stories: Optional[int] = Field(None, ge=1, le=5, description="Number of stories")
+    wildfire_mitigation_evidence: Optional[bool] = Field(
+        None,
+        description="Whether defensible-space or wildfire mitigation evidence is documented",
+    )
+    mitigation_notes: Optional[str] = Field(None, description="Producer or underwriter notes describing mitigation evidence")
+
+
+class IntakeCoverageRequest(BaseModel):
+    """Coverage fields accepted at intake."""
+    coverage_a: Optional[float] = Field(None, gt=0, description="Coverage A - Dwelling limit")
+    coverage_b_pct: Optional[float] = Field(10, ge=0, le=100, description="Coverage B - Other structures as % of A")
+    coverage_c_pct: Optional[float] = Field(50, ge=0, le=100, description="Coverage C - Personal property as % of A")
+    coverage_d_pct: Optional[float] = Field(20, ge=0, le=100, description="Coverage D - Loss of use as % of A")
+    coverage_e: Optional[float] = Field(300000, ge=0, description="Coverage E - Liability limit")
+    coverage_f: Optional[float] = Field(5000, ge=0, description="Coverage F - Medical payments limit")
+    deductible: Optional[float] = Field(1000, ge=0, description="Policy deductible")
+
+
+class IntakeHO3Submission(BaseModel):
+    """Canonical HO3 intake payload. Some fields are optional so the workflow can request missing information."""
+    applicant: IntakeApplicant = Field(default_factory=IntakeApplicant)
+    risk: IntakeRiskProfile = Field(default_factory=IntakeRiskProfile)
+    coverage_request: IntakeCoverageRequest = Field(default_factory=IntakeCoverageRequest)
+    quote_id: Optional[str] = Field(None, description="Quote ID if resuming")
+
+
 class QuoteRunRequest(BaseModel):
     submission: QuoteSubmission
     use_agentic: bool = False  # Enable agentic behavior
@@ -35,7 +82,7 @@ class QuoteRunRequest(BaseModel):
 
 
 class HO3RunRequest(BaseModel):
-    submission: HO3Submission  # Canonical HO3 submission format
+    submission: IntakeHO3Submission  # Canonical HO3 intake format
 
 
 class MissingInfoAnswerRequest(BaseModel):
@@ -44,12 +91,12 @@ class MissingInfoAnswerRequest(BaseModel):
 
 
 class ReviewActionRequest(BaseModel):
-    action: str
+    action: Literal["approve", "override", "request_more_info"]
     reviewer: Optional[str] = None
     note: Optional[str] = None
     final_decision: Optional[DecisionType] = None
     approved_premium: Optional[float] = None
-    requested_info: Optional[list] = None
+    requested_info: Optional[List[Union[str, Dict[str, Any]]]] = None
 
 
 class QuoteRunResponse(BaseModel):
@@ -421,23 +468,18 @@ def _save_review_action(run_record: RunRecord, request: ReviewActionRequest) -> 
 
 
 @app.post("/quote/run", response_model=QuoteRunResponse)
-async def run_quote_processing(request: Dict[str, Any]):
+async def run_quote_processing(request: Union[QuoteRunRequest, QuoteSubmission]):
     """
     Process a quote submission through the underwriting workflow.
     """
-    submission_payload = _extract_submission_payload(request)
-    quote_submission = QuoteSubmission(**submission_payload)
+    quote_submission = request.submission if isinstance(request, QuoteRunRequest) else request
 
     try:
-        # Use 7-agent system for all processing
-        workflow_state = UnderwritingWorkflow(db=db).run(quote_submission.model_dump())
-        
-        # Store the run record
+        workflow_state = workflow.run(quote_submission.model_dump())
         run_id = store_run_record(workflow_state)
         return _build_quote_response(workflow_state, run_id)
-        
+
     except Exception as e:
-        # Create a failed run record
         error_state = WorkflowState(quote_submission=quote_submission)
         run_id = store_run_record(error_state, status="failed", error_message=str(e))
         
@@ -448,21 +490,18 @@ async def run_quote_processing(request: Dict[str, Any]):
 
 
 @app.post("/quote/ho3", response_model=QuoteRunResponse)
-async def run_ho3_quote_processing(request: Dict[str, Any]):
+async def run_ho3_quote_processing(request: HO3RunRequest):
     """
     Process an HO3 submission through the governed underwriting workflow.
     """
-    submission_payload = _normalize_ho3_payload(_extract_submission_payload(request))
+    submission_payload = _normalize_ho3_payload(request.submission.model_dump(exclude_none=True))
 
     try:
-        workflow_state = UnderwritingWorkflow(db=db).run(submission_payload)
-        
-        # Store the run record
+        workflow_state = workflow.run(submission_payload)
         run_id = store_run_record(workflow_state)
         return _build_quote_response(workflow_state, run_id)
-        
+
     except Exception as e:
-        # Create a failed run record
         applicant = submission_payload.get("applicant", {})
         risk = submission_payload.get("risk", {})
         coverage = submission_payload.get("coverage_request", {})
@@ -514,7 +553,6 @@ async def answer_missing_info(run_id: str, request: MissingInfoAnswerRequest):
     open_task = db.get_open_hitl_task_for_run(run_id)
 
     try:
-        workflow = UnderwritingWorkflow(db=db)
         workflow_state = workflow.resume(run_record.workflow_state, request.answers)
         resumed_run_id = store_run_record(workflow_state, status=workflow_state.status)
 

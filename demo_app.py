@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 
 import streamlit as st
 
-from workflows.agent_workflow import UnderwritingWorkflow
+from workflows import UnderwritingWorkflow
 
 
 ROOT = Path(__file__).resolve().parent
