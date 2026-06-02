@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from pydantic import BaseModel, Field, ValidationError
 
-from workflows import UnderwritingWorkflow
+from workflows.agent_workflow import UnderwritingWorkflow
 
 
 class ExpectedLabel(BaseModel):
