@@ -31,14 +31,14 @@ jobs:
         run: python -m pytest
 
       - name: Regenerate labeled eval dataset
-        run: python -m evals.generate_dataset
+        run: PYTHONPATH=. python -m evals.generate_dataset
 
       - name: Verify generated eval dataset is committed
         run: git diff --exit-code -- evals/datasets/ho3_labeled.jsonl
 
       - name: Run labeled underwriting eval gate
         run: >-
-          python -m evals.run
+          PYTHONPATH=. python -m evals.run
           --dataset evals/datasets/ho3_labeled.jsonl
           --json
           --min-decision-accuracy 1.0
