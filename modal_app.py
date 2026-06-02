@@ -47,11 +47,32 @@ image = (
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app()
 def fastapi_app():
-    """Serve the existing FastAPI app on Modal as an ASGI endpoint."""
+    """Serve the existing FastAPI app on Modal as an ASGI endpoint with rate limiting."""
     from app.main import app as web_app
+    from datetime import datetime, timedelta
+    from collections import defaultdict
+
+    # In-memory rate limiter (works with max_containers=1)
+    request_counts = defaultdict(int)
+    last_reset = datetime.now()
 
     @web_app.middleware("http")
-    async def commit_modal_volume_after_request(request, call_next):
+    async def rate_limit_and_commit(request, call_next):
+        nonlocal last_reset
+        now = datetime.now()
+
+        # Reset daily counter
+        if now - last_reset >= timedelta(days=1):
+            request_counts.clear()
+            last_reset = now
+
+        # Check rate limit (1000/day)
+        client_ip = request.client.host if request.client else "unknown"
+        request_counts[client_ip] += 1
+        if request_counts[client_ip] > 1000:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=429, detail="Rate limit exceeded: 1000 requests per day")
+
         response = await call_next(request)
         data_volume.commit()
         return response
