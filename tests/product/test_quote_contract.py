@@ -53,12 +53,15 @@ def test_legacy_quote_payload_remains_supported():
     response = client.post(
         "/quote/run",
         json={
-            "applicant_name": "Legacy User",
-            "address": "456 Legacy Ln, Oakland, CA 94601",
-            "property_type": "single_family",
-            "coverage_amount": 300000,
-            "construction_year": 2005,
-            "roof_type": "composite",
+            "submission": {
+                "applicant_name": "Legacy User",
+                "address": "456 Legacy Ln, Oakland, CA 94601",
+                "property_type": "single_family",
+                "coverage_amount": 300000,
+                "construction_year": 2005,
+                "roof_type": "composite",
+            },
+            "use_agentic": False
         },
     )
 
