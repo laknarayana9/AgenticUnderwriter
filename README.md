@@ -289,6 +289,24 @@ The resumed response keeps the original `run_id`, appends answer events to the
 audit trail, and continues through retrieval, assessment, rating, and decision
 packaging.
 
+The legacy `/quote/run` endpoint accepts a `QuoteSubmission` wrapped in a
+`QuoteRunRequest` body (the `submission` object is required; `use_agentic` and
+`additional_answers` are optional):
+
+```bash
+curl -X POST http://localhost:8000/quote/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submission": {
+      "applicant_name": "Robert Johnson",
+      "address": "789 Pine St, Los Angeles, CA 90001",
+      "property_type": "single_family",
+      "coverage_amount": 350000
+    },
+    "use_agentic": false
+  }'
+```
+
 ## Human Review Flow
 
 Referral and decline outcomes move to `pending_review` and can be listed:
