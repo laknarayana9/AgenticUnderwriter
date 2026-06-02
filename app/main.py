@@ -468,11 +468,11 @@ def _save_review_action(run_record: RunRecord, request: ReviewActionRequest) -> 
 
 
 @app.post("/quote/run", response_model=QuoteRunResponse)
-async def run_quote_processing(request: Union[QuoteRunRequest, QuoteSubmission]):
+async def run_quote_processing(request: QuoteRunRequest):
     """
     Process a quote submission through the underwriting workflow.
     """
-    quote_submission = request.submission if isinstance(request, QuoteRunRequest) else request
+    quote_submission = request.submission
 
     try:
         workflow_state = workflow.run(quote_submission.model_dump())
