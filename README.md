@@ -4,8 +4,8 @@ A governed agentic workflow that turns a homeowner-insurance application into a
 cited `ACCEPT` / `REFER` / `DECLINE` decision, with human-in-the-loop review.
 
 **Portfolio proof points:** CI-gated evals across 196 stratified cases with 100%
-decision accuracy, 100% reason-code match, 100% retrieval recall@5, and 30
-passing product tests.
+decision accuracy, 100% reason-code match, 100% retrieval recall@5, 100% citation
+faithfulness, and 42 passing product tests.
 
 This repo demonstrates a compact quote-to-underwrite workflow for homeowners
 submissions, including HO3 homeowners policies. It is built to show the product
@@ -57,6 +57,28 @@ flowchart LR
     M -->|Yes| N["HITL review queue"]
     M -->|No| O["Completed quote"]
 ```
+
+## Corpus
+
+The retrieval corpus is **synthetic** carrier underwriting guidelines (not
+proprietary), authored in Markdown with explicit `MUST/SHALL/SHOULD/MAY` rule
+language and `## / ###` section structure for citation-grade chunking. It lives
+in [app/externaldata/docs](app/externaldata/docs) and currently holds 8
+guideline documents:
+
+- `uw_guidelines_homeowners.md` — eligibility, referral, and knockouts
+- `hazards_guidance.md` — wildfire/flood/wind hazard signals → actions
+- `endorsements_manual.md` — endorsement catalog and requirements
+- `rating_rules.md` — rating plan, factors, deductible rules
+- `uw_workflow_playbook.md` — triage workflow and missing-info questions
+- `liability_exposures_guidance.md` — animal, pool/trampoline, home-business liability
+- `water_damage_guidance.md` — non-flood water, sump/backup, freeze, leak mitigation
+- `claims_history_guidance.md` — loss frequency/severity and coverage continuity
+
+Owner of record: underwriting policy (synthetic for this demo). Refresh cadence:
+versioned per document header (`Effective Date` / `Version`); re-ingested on
+startup. Swap in real guidelines without code changes — chunking and citation
+tracking key off the same Markdown structure.
 
 ## Run
 
@@ -152,6 +174,17 @@ python scripts/compare_retrieval.py --query "high wildfire risk roof age referra
 The comparison CLI prints lexical, semantic, and hybrid results side by side
 with source document, score, chunk ID, and snippet.
 
+Compare chunking strategies (header-based vs fixed-size) on the same query set:
+
+```bash
+python scripts/compare_chunking.py --out docs/chunking_comparison.md
+```
+
+This ingests the corpus under each chunking strategy across all three retrieval
+modes and reports chunk count, mean chunk size, hit@k, and MRR over a fixed
+probe set. The lexical-vs-hybrid columns double as a reranking-impact view. The
+generated report lives at [docs/chunking_comparison.md](docs/chunking_comparison.md).
+
 Generate and run the labeled workflow eval harness:
 
 ```bash
@@ -162,7 +195,7 @@ python -m evals.run --dataset evals/datasets/ho3_labeled.jsonl
 The eval dataset contains 196 stratified HO3 submissions with expected
 decisions, reason codes, workflow statuses, and gold citation chunk IDs. The
 runner reports decision accuracy, reason-code exact match, retrieval recall@k,
-and optional rationale quality.
+citation faithfulness, and optional rationale quality.
 
 Current CI-gated metrics:
 
@@ -173,7 +206,13 @@ Current CI-gated metrics:
 | Decision accuracy | 100% |
 | Reason-code match | 100% |
 | Retrieval recall@5 | 100% |
-| Product tests | 30 passing |
+| Faithfulness | 100% |
+| Product tests | 42 passing |
+
+Faithfulness is a deterministic groundedness check: it verifies the decision
+packet only cites chunks that were actually retrieved this run and only asserts
+supporting facts the rules actually produced. It catches fabricated citations or
+facts when the optional LLM wording path is enabled.
 
 Coverage breakdown:
 
@@ -194,7 +233,8 @@ python -m evals.run \
   --json \
   --min-decision-accuracy 1.0 \
   --min-reason-code-match 1.0 \
-  --min-retrieval-recall 1.0
+  --min-retrieval-recall 1.0 \
+  --min-faithfulness 1.0
 ```
 
 Exit code `0` means configured thresholds passed, `1` means metric thresholds
@@ -210,11 +250,45 @@ workflow can run without network calls or model downloads.
 RAG_RETRIEVAL_MODE=lexical|semantic|hybrid
 RAG_EMBEDDINGS_ENABLED=true|false
 EMBEDDING_MODEL=hashing-underwriting-v1
+RAG_CHUNK_STRATEGY=header|fixed
 ```
 
-To experiment with sentence-transformers, install the optional package
-and set `EMBEDDING_MODEL=sentence-transformers:all-MiniLM-L6-v2`. If embeddings
-are unavailable, semantic and hybrid modes fall back to lexical retrieval.
+`EMBEDDING_MODEL` selects the embedding provider:
+
+- `hashing-underwriting-v1` (default): deterministic local hash embeddings.
+- `nebius:<model>` (e.g. `nebius:BAAI/bge-en-icl`): Nebius Token Factory
+  embeddings over its OpenAI-compatible endpoint, needs `NEBIUS_API_KEY`.
+- `sentence-transformers:<model>`: optional local model when installed.
+
+If a provider is unavailable, semantic and hybrid modes fall back to lexical
+(or, for `nebius:`, to deterministic hashing embeddings) so runs stay
+reproducible offline.
+
+`RAG_CHUNK_STRATEGY` switches between header-based chunking (default, keeps
+related rules together) and fixed-size windows. Compare them with
+`scripts/compare_chunking.py`.
+
+### Nebius Token Factory
+
+Nebius Token Factory backs at least one model call in this project (per the
+cohort requirement), reachable for either embeddings or generation since it is
+OpenAI-compatible:
+
+```bash
+# Embeddings through Nebius
+RAG_EMBEDDINGS_ENABLED=true
+EMBEDDING_MODEL=nebius:BAAI/bge-en-icl
+NEBIUS_API_KEY=...
+
+# Or producer-rationale generation through Nebius
+LLM_STRUCTURED_OUTPUT_ENABLED=true
+LLM_PROVIDER=nebius
+LLM_MODEL=meta-llama/Llama-3.3-70B-Instruct
+NEBIUS_API_KEY=...
+```
+
+Both paths stay disabled by default for deterministic CI; deterministic
+underwriting rules remain the governed decision layer regardless of provider.
 
 ## Configuration
 
@@ -233,11 +307,16 @@ workflow has already identified the decision or the required fields.
 
 ```bash
 LLM_STRUCTURED_OUTPUT_ENABLED=true|false
-LLM_PROVIDER=openai|disabled
+LLM_PROVIDER=openai|nebius|disabled
 LLM_MODEL=gpt-4o-mini
 OPENAI_API_KEY=...
+NEBIUS_API_KEY=...
 LLM_PROMPT_VERSION=structured-llm-v1
 ```
+
+Set `LLM_PROVIDER=nebius` to route the same structured calls through Nebius
+Token Factory (OpenAI-compatible); it reuses the OpenAI SDK with a Nebius
+`base_url` and `NEBIUS_API_KEY`.
 
 Set `LLM_STRUCTURED_OUTPUT_ENABLED=true` with an API key to enable provider
 calls. The `app/llm_service.py` provider wrapper sends prompt templates from

@@ -18,6 +18,9 @@ These documents are **synthetic** (not carrier-proprietary) and are designed to:
 3. `endorsements_manual.md` — endorsement catalog + eligibility + requirements
 4. `rating_rules.md` — simplified rating plan + factors + deductible rules
 5. `uw_workflow_playbook.md` — triage workflow + missing-info questions + escalation
+6. `liability_exposures_guidance.md` — animal, pool/trampoline, and home-business liability
+7. `water_damage_guidance.md` — non-flood water, sump/backup, freeze, and leak mitigation
+8. `claims_history_guidance.md` — loss frequency/severity and coverage continuity
 
 ## Notes
 - You can ingest these with your Phase 1 ingestion pipeline (Markdown).
