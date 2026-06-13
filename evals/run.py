@@ -46,6 +46,7 @@ class EvalCaseResult:
     decision_match: bool
     reason_code_match: bool
     retrieval_recall_at_k: Optional[float]
+    faithfulness: float = 1.0
     rationale_quality: Optional[float] = None
     error: Optional[str] = None
 
@@ -56,6 +57,7 @@ class EvalReport:
     decision_accuracy: float
     reason_code_match: float
     retrieval_recall_at_k: float
+    faithfulness: float
     status_match: Optional[float]
     rationale_quality: Optional[float]
     failures: List[EvalCaseResult] = field(default_factory=list)
@@ -127,6 +129,7 @@ def _evaluate_case(
         decision_match = actual_decision == case.expected.decision
         reason_code_match = _as_set(actual_reason_codes) == _as_set(case.expected.reason_codes)
         retrieval_recall = _recall_at_k(case.expected.gold_citations, actual_citations)
+        faithfulness = _score_faithfulness(packet, state)
 
         return EvalCaseResult(
             case_id=case.id,
@@ -142,6 +145,7 @@ def _evaluate_case(
             decision_match=decision_match and status_match,
             reason_code_match=reason_code_match,
             retrieval_recall_at_k=retrieval_recall,
+            faithfulness=faithfulness,
             rationale_quality=rationale_quality,
         )
     except Exception as exc:
@@ -159,6 +163,7 @@ def _evaluate_case(
             decision_match=False,
             reason_code_match=False,
             retrieval_recall_at_k=0.0 if case.expected.gold_citations else None,
+            faithfulness=0.0,
             rationale_quality=0.0 if include_rationale_quality else None,
             error=str(exc),
         )
@@ -189,6 +194,7 @@ def _build_report(results: Sequence[EvalCaseResult]) -> EvalReport:
             not result.decision_match
             or not result.reason_code_match
             or (result.retrieval_recall_at_k is not None and result.retrieval_recall_at_k < 1.0)
+            or result.faithfulness < 1.0
             or result.error
         )
     ]
@@ -198,6 +204,7 @@ def _build_report(results: Sequence[EvalCaseResult]) -> EvalReport:
         decision_accuracy=_mean(1.0 if result.decision_match else 0.0 for result in results),
         reason_code_match=_mean(1.0 if result.reason_code_match else 0.0 for result in results),
         retrieval_recall_at_k=_mean(citation_results),
+        faithfulness=_mean(result.faithfulness for result in results),
         status_match=_mean(
             1.0 if result.status == result.expected_status else 0.0
             for result in status_labeled
@@ -235,6 +242,54 @@ def _score_rationale_quality(packet: Any, expected_reason_codes: Sequence[str]) 
     return round(min(1.0, score), 4)
 
 
+def _score_faithfulness(packet: Any, state: Any) -> float:
+    """
+    Deterministic groundedness check for the produced rationale.
+
+    Faithfulness here means the decision packet only references evidence and
+    facts that actually exist in the run — it does not invent citations or
+    supporting facts. We average two sub-checks where each applies:
+
+    - citation grounding: every cited chunk_id was actually retrieved this run.
+    - fact grounding: every supporting fact's key appears in facts_used.
+
+    Cases with no citations or no supporting facts (e.g. accepts and missing-info
+    pauses, which are grounded in deterministic rules rather than retrieval) are
+    vacuously faithful for the check that does not apply. A packet that cites a
+    chunk that was never retrieved, or asserts a fact the rules never produced,
+    scores below 1.0.
+    """
+    if packet is None:
+        return 0.0
+
+    retrieved_ids = {
+        chunk.get("chunk_id")
+        for chunk in (state.retrieval or {}).get("retrieved_chunks", [])
+        if isinstance(chunk, dict) and chunk.get("chunk_id")
+    }
+
+    sub_scores: List[float] = []
+
+    cited_ids = [cid for cid in (packet.evidence_cited or []) if cid]
+    if cited_ids:
+        grounded = sum(1 for cid in cited_ids if cid in retrieved_ids)
+        sub_scores.append(grounded / len(cited_ids))
+
+    rationale = packet.producer_rationale
+    if rationale and rationale.supporting_facts:
+        facts_used = packet.facts_used or {}
+        fact_keys = {str(key).lower() for key in facts_used}
+        grounded_facts = sum(
+            1 for fact in rationale.supporting_facts
+            if str(fact).split(":", 1)[0].strip().lower() in fact_keys
+        )
+        sub_scores.append(grounded_facts / len(rationale.supporting_facts))
+
+    if not sub_scores:
+        return 1.0
+    return round(sum(sub_scores) / len(sub_scores), 4)
+
+
 def _print_report(report: EvalReport, *, k: int, include_rationale_quality: bool) -> None:
     print("HO3 Evaluation Report")
     print("=====================")
@@ -242,6 +297,7 @@ def _print_report(report: EvalReport, *, k: int, include_rationale_quality: bool
     print(f"decision_accuracy: {report.decision_accuracy:.3f}")
     print(f"reason_code_match: {report.reason_code_match:.3f}")
     print(f"retrieval_recall@{k}: {report.retrieval_recall_at_k:.3f}")
+    print(f"faithfulness: {report.faithfulness:.3f}")
     if include_rationale_quality and report.rationale_quality is not None:
         print(f"rationale_quality: {report.rationale_quality:.3f}")
     print("")
@@ -288,6 +344,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--min-decision-accuracy", type=float, default=1.0)
     parser.add_argument("--min-reason-code-match", type=float, default=0.95)
     parser.add_argument("--min-retrieval-recall", type=float, default=0.75)
+    parser.add_argument("--min-faithfulness", type=float, default=None)
     parser.add_argument("--min-rationale-quality", type=float, default=None)
     parser.add_argument("--include-llm-rationale-quality", action="store_true")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable summary JSON.")
@@ -310,6 +367,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "decision_accuracy": report.decision_accuracy,
             "reason_code_match": report.reason_code_match,
             f"retrieval_recall@{args.k}": report.retrieval_recall_at_k,
+            "faithfulness": report.faithfulness,
             "rationale_quality": report.rationale_quality,
             "failure_count": len(report.failures),
         }, indent=2, sort_keys=True))
@@ -325,6 +383,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ("reason_code_match", report.reason_code_match, args.min_reason_code_match),
         ("retrieval_recall", report.retrieval_recall_at_k, args.min_retrieval_recall),
     ]
+    if args.min_faithfulness is not None:
+        thresholds.append(("faithfulness", report.faithfulness, args.min_faithfulness))
     if args.min_rationale_quality is not None:
         thresholds.append(("rationale_quality", report.rationale_quality or 0.0, args.min_rationale_quality))
 

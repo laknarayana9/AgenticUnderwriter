@@ -44,6 +44,7 @@ jobs:
           --min-decision-accuracy 1.0
           --min-reason-code-match 1.0
           --min-retrieval-recall 1.0
+          --min-faithfulness 1.0
 
       - name: Smoke test retrieval comparison CLI
         run: >-

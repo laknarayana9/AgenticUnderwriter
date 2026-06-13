@@ -40,3 +40,13 @@ def test_eval_report_surfaces_label_failures():
 
     assert report.decision_accuracy == 0
     assert report.failures[0].case_id == case.id
+
+
+def test_faithfulness_is_perfect_for_grounded_subset():
+    cases = load_dataset(DATASET)[:12]
+    report = evaluate_cases(cases)
+
+    # The governed packet only cites retrieved chunks and facts it actually
+    # produced, so deterministic runs are fully grounded.
+    assert report.faithfulness == 1.0
+    assert all(result.faithfulness == 1.0 for result in report.results)
