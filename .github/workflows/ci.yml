@@ -51,3 +51,6 @@ jobs:
           python scripts/compare_retrieval.py
           --query "high wildfire risk roof age referral"
           --limit 3
+
+      - name: Smoke test chunking comparison CLI
+        run: python scripts/compare_chunking.py --k 3

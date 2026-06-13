@@ -30,6 +30,10 @@ VALID_RETRIEVAL_MODES = {
     RETRIEVAL_MODE_HYBRID,
 }
 
+CHUNK_STRATEGY_HEADER = "header"
+CHUNK_STRATEGY_FIXED = "fixed"
+VALID_CHUNK_STRATEGIES = {CHUNK_STRATEGY_HEADER, CHUNK_STRATEGY_FIXED}
+
 
 @dataclass(frozen=True)
 class RAGRetrievalConfig:
@@ -37,6 +41,7 @@ class RAGRetrievalConfig:
     retrieval_mode: str = RETRIEVAL_MODE_LEXICAL
     embeddings_enabled: bool = False
     embedding_model: str = "hashing-underwriting-v1"
+    chunk_strategy: str = CHUNK_STRATEGY_HEADER
 
     @classmethod
     def from_env(cls) -> "RAGRetrievalConfig":
@@ -52,10 +57,17 @@ class RAGRetrievalConfig:
             "on",
         }
         embedding_model = os.getenv("EMBEDDING_MODEL", "hashing-underwriting-v1").strip()
+
+        chunk_strategy = os.getenv("RAG_CHUNK_STRATEGY", CHUNK_STRATEGY_HEADER).strip().lower()
+        if chunk_strategy not in VALID_CHUNK_STRATEGIES:
+            logger.warning("Invalid RAG_CHUNK_STRATEGY=%s; using header", chunk_strategy)
+            chunk_strategy = CHUNK_STRATEGY_HEADER
+
         return cls(
             retrieval_mode=mode,
             embeddings_enabled=embeddings_enabled,
             embedding_model=embedding_model,
+            chunk_strategy=chunk_strategy,
         )
 
 
@@ -188,9 +200,14 @@ class RAGEngine:
         self.embedding_provider: Optional[EmbeddingProvider] = self._create_embedding_provider()
         self.chunk_embeddings: Optional[np.ndarray] = None
         
-        self.chunk_size_tokens = 600  # Target tokens per chunk
+        self.chunk_size_tokens = 600  # Target tokens per chunk (header strategy)
         self.chunk_overlap = 100      # Character overlap
         self.min_chunk_size = 100     # Minimum characters
+
+        # Fixed-size strategy: constant character window with overlap, structure
+        # agnostic. ~800 chars ≈ the 600-token target the header strategy aims for.
+        self.fixed_chunk_chars = 800
+        self.fixed_chunk_overlap_chars = 100
 
         self.client = None
         self.collection = None
@@ -342,10 +359,57 @@ class RAGEngine:
         
         # Remove header lines for chunking
         content_body = self._remove_header(content)
-        
-        # Intelligent chunking based on headers
-        chunks = self._chunk_by_headers(content_body, metadata)
-        
+
+        # Dispatch on the configured chunking strategy so the two approaches can
+        # be compared on the same corpus (see scripts/compare_chunking.py).
+        if self.config.chunk_strategy == CHUNK_STRATEGY_FIXED:
+            chunks = self._chunk_fixed_size(content_body, metadata)
+        else:
+            chunks = self._chunk_by_headers(content_body, metadata)
+
+        metadata.total_chunks = len(chunks)
+        return chunks
+
+    def _chunk_fixed_size(self, content: str, metadata: DocumentMetadata) -> List[RetrievalChunk]:
+        """
+        Fixed-size chunking: slide a constant character window with overlap,
+        ignoring section structure.
+
+        This is the deliberate contrast to header-based chunking. It is simpler
+        and structure-agnostic, but can split a rule across two chunks or merge
+        unrelated rules into one window. The comparison harness measures how that
+        tradeoff affects retrieval quality on the same query set.
+        """
+        window = self.fixed_chunk_chars
+        overlap = self.fixed_chunk_overlap_chars
+        stride = max(1, window - overlap)
+
+        normalized = content.strip()
+        if len(normalized) <= self.min_chunk_size:
+            return []
+
+        chunks: List[RetrievalChunk] = []
+        chunk_id = 0
+        for start in range(0, len(normalized), stride):
+            window_text = normalized[start:start + window]
+            if len(window_text.strip()) < self.min_chunk_size:
+                if chunks:
+                    break
+                continue
+            chunks.append(
+                self._create_chunk(
+                    window_text,
+                    metadata,
+                    section="fixed_window",
+                    subsection=f"chars_{start}_{start + len(window_text)}",
+                    chunk_id=chunk_id,
+                    char_start=start,
+                )
+            )
+            chunk_id += 1
+            if start + window >= len(normalized):
+                break
+
         return chunks
     
     def _extract_metadata(self, content: str, file_path: Path) -> DocumentMetadata:
@@ -388,30 +452,19 @@ class RAGEngine:
     
     def _chunk_by_headers(self, content: str, metadata: DocumentMetadata) -> List[RetrievalChunk]:
         """
-        Intelligent chunking based on markdown headers
-        
-        HEADER DETECTION ALGORITHM:
-        What's your header detection algorithm?
-        1. Regex Pattern Matching: Use \n(?=## ) for major sections, \n(?=### ) for subsections
-        2. Hierarchical Parsing: Maintain parent-child relationships between sections
-        3. Title Extraction: Clean header text by removing markdown symbols and whitespace
-        4. Content Separation: Split content while preserving section boundaries
-        
-        EDGE CASES IN MARKDOWN:
-        How do you handle edge cases in markdown?
-        - Missing Headers: Fallback to paragraph-based chunking if no ##/### found
-        - Irregular Spacing: Handle variable whitespace around headers (## vs ## vs ##)
-        - Nested Headers: Support up to 6 levels (######) but prioritize ##/### for underwriting docs
-        - Mixed Content: Handle code blocks, tables, lists within sections
-        - Empty Sections: Skip sections with no meaningful content
-        - Unicode Headers: Support special characters and international content
-        - Malformed Markdown: Graceful degradation with content preservation
-        
-        CHUNKING STRATEGY:
-        - Context Preservation: 100-character overlap between chunks
-        - Size Limits: Target 600 tokens per chunk, minimum 100 characters
-        - Semantic Coherence: Keep related rules and examples together
-        - Citation Tracking: Maintain source references and line numbers
+        Header-aware chunking for the underwriting guideline markdown.
+
+        Algorithm:
+        1. Split the body on `## ` major sections, then on `### ` subsections,
+           so each chunk stays within one rule grouping.
+        2. Within a subsection, accumulate paragraphs (split on blank lines)
+           until adding the next one would exceed ~800 characters, then emit a
+           chunk. Subsections under min_chunk_size are skipped.
+        3. Record section/subsection titles and char offsets on each chunk for
+           citation tracking.
+
+        This keeps semantically related rules together, which is the contrast
+        the fixed-size strategy (_chunk_fixed_size) is compared against.
         """
         chunks = []
         
