@@ -214,22 +214,19 @@ class RAGEngine:
         config: Optional[RAGRetrievalConfig] = None,
     ):
         """
-        Initialize RAG Engine with technical architecture decisions
-        
-        EMBEDDING MODEL RATIONALE:
-        Why SentenceTransformer vs OpenAI embeddings?
-        - Cost Efficiency: No API call costs per query (~$0.001 vs $0.02 per 1K tokens)
-        - Latency: Local inference (~50ms vs 200-500ms API roundtrip)
-        - Privacy: No data sent to external services (HIPAA/GDPR compliance)
-        - Control: Can fine-tune model on domain-specific underwriting language
-        - Reliability: No rate limits or service dependencies
-        
-        EMBEDDING MODEL UPDATES:
-        - Version Control: Store embeddings with model version in metadata
-        - Gradual Rollout: A/B test new models with traffic splitting
-        - Backward Compatibility: Maintain multiple model versions during transition
-        - Performance Monitoring: Track accuracy and latency metrics
-        - Fallback Strategy: Keep previous model version as backup
+        Initialize the RAG engine from a RAGRetrievalConfig.
+
+        Embedding provider is chosen from config.embedding_model:
+        - hashing-underwriting-v1 (default): deterministic local hash embeddings,
+          no network or model download, used so tests and offline runs are
+          reproducible.
+        - nebius:<model>: Nebius Token Factory embeddings (OpenAI-compatible),
+          falling back to hashing embeddings when the key/package is missing.
+        - sentence-transformers:<model>: optional local model when installed.
+
+        ChromaDB is only used when sentence-transformer embeddings are enabled;
+        all other modes score chunks in-memory. The embedding model name is
+        stored in each retrieved chunk's metadata for traceability.
         """
         self.chroma_path = chroma_path
         self.data_dir = Path(data_dir)
@@ -693,41 +690,29 @@ class RAGEngine:
         mode: Optional[str] = None,
     ) -> List[RetrievalChunk]:
         """
-        Retrieve relevant chunks with semantic search
-        
-        SIMILARITY SEARCH OPTIMIZATION:
-        How do you optimize similarity search?
-        1. Query Preprocessing: Clean and normalize query text (lowercase, remove special chars)
-        2. Embedding Caching: Cache frequently used query embeddings to reduce computation
-        3. Batch Processing: Process multiple queries simultaneously when possible
-        4. Index Optimization: Use ChromaDB's built-in HNSW index for fast approximate search
-        5. Memory Management: Limit concurrent queries to prevent memory pressure
-        6. Filter Pushdown: Apply metadata filters before similarity search for efficiency
-        7. Distance Metrics: Use cosine similarity normalized embeddings for better results
-        
-        RERANKING STRATEGY:
-        What's your reranking strategy?
-        1. Initial Retrieval: Get top 50 candidates from vector search
-        2. Semantic Reranking: Apply BM25 keyword matching on top candidates
-        3. Rule Strength Boosting: Prioritize chunks with MUST/SHALL language
-        4. Recency Boosting: Prefer newer document versions
-        5. Diversity Penalty: Reduce redundancy from same document sections
-        6. Threshold Filtering: Remove chunks below minimum relevance score (0.3)
-        7. Final Scoring: Combine semantic similarity + rule strength + recency
-        
-        PERFORMANCE CONSIDERATIONS:
-        - Latency Target: <100ms for single query, <500ms for batch of 10
-        - Memory Usage: <2GB for embedding model + vector index
-        - Concurrent Queries: Support 100+ simultaneous searches
-        - Cache Hit Rate: >80% for common underwriting queries
-        
+        Retrieve the top-n relevant chunks for a query.
+
+        Dispatches on the requested (or configured) retrieval mode:
+        - lexical: term-frequency scoring over chunk text with a small
+          MUST/SHALL rule-strength boost (_lexical_retrieve). Always available
+          and used as the fallback when embeddings are missing or a mode errors.
+        - semantic: cosine similarity between the query embedding and chunk
+          embeddings (_semantic_retrieve).
+        - hybrid: weighted merge of semantic and lexical scores with a small
+          reciprocal-rank boost (_hybrid_retrieve).
+
+        Optional metadata `filters` (e.g. carrier, product, state) are applied
+        before scoring. Any retrieval error falls back to lexical so the
+        governed workflow always receives citable evidence.
+
         Args:
-            query: Search query
-            n_results: Number of results to return
-            filters: Metadata filters (carrier, product, state, etc.)
-            
+            query: Search query.
+            n_results: Number of results to return.
+            filters: Exact-match metadata filters.
+            mode: Override the configured retrieval mode for this call.
+
         Returns:
-            List of relevant chunks with relevance scores
+            List of RetrievalChunk with relevance_score set, highest first.
         """
         requested_mode = (mode or self.config.retrieval_mode).strip().lower()
         if requested_mode not in VALID_RETRIEVAL_MODES:
