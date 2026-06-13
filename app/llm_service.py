@@ -46,40 +46,75 @@ class StructuredJSONProvider(Protocol):
         """Return a JSON object that should validate against schema."""
 
 
+# Nebius Token Factory exposes an OpenAI-compatible REST surface, so the same
+# OpenAI SDK client works by pointing base_url at the Nebius endpoint.
+NEBIUS_DEFAULT_BASE_URL = "https://api.studio.nebius.com/v1/"
+
+
 @dataclass(frozen=True)
 class LLMServiceConfig:
     enabled: bool = False
     provider: str = "openai"
     model: str = "gpt-4o-mini"
     api_key: Optional[str] = None
+    base_url: Optional[str] = None
     prompt_version: str = "structured-llm-v1"
 
     @classmethod
     def from_env(cls) -> "LLMServiceConfig":
+        provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+        if provider == "nebius":
+            # Prefer a Nebius-specific key but fall back to the generic key so a
+            # single key var can drive either OpenAI-compatible host.
+            api_key = os.getenv("NEBIUS_API_KEY") or os.getenv("OPENAI_API_KEY")
+            base_url = os.getenv("NEBIUS_BASE_URL", NEBIUS_DEFAULT_BASE_URL).strip()
+            default_model = "meta-llama/Llama-3.3-70B-Instruct"
+        else:
+            api_key = os.getenv("OPENAI_API_KEY")
+            base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
+            default_model = "gpt-4o-mini"
         return cls(
             enabled=_env_bool("LLM_STRUCTURED_OUTPUT_ENABLED", False),
-            provider=os.getenv("LLM_PROVIDER", "openai").strip().lower(),
-            model=os.getenv("LLM_MODEL", "gpt-4o-mini").strip(),
-            api_key=os.getenv("OPENAI_API_KEY"),
+            provider=provider,
+            model=os.getenv("LLM_MODEL", default_model).strip(),
+            api_key=api_key,
+            base_url=base_url,
             prompt_version=os.getenv("LLM_PROMPT_VERSION", "structured-llm-v1").strip(),
         )
 
 
 class OpenAIJSONProvider:
-    """OpenAI chat-completions adapter with lazy optional dependency loading."""
+    """
+    OpenAI-compatible chat-completions adapter with lazy dependency loading.
+
+    A ``base_url`` override lets the same adapter target any OpenAI-compatible
+    host, including Nebius Token Factory, without a second SDK.
+    """
 
     provider_name = "openai"
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, base_url: Optional[str] = None):
         if not api_key:
-            raise LLMUnavailable("OPENAI_API_KEY is not configured")
+            raise LLMUnavailable("API key is not configured")
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise LLMUnavailable("openai package is not installed") from exc
 
-        self.client = OpenAI(api_key=api_key)
+        client_kwargs: Dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self.client = OpenAI(**client_kwargs)
         self.model = model
+
+
+class NebiusJSONProvider(OpenAIJSONProvider):
+    """Nebius Token Factory adapter (OpenAI-compatible chat completions)."""
+
+    provider_name = "nebius"
+
+    def __init__(self, api_key: str, model: str, base_url: Optional[str] = None):
+        super().__init__(api_key=api_key, model=model, base_url=base_url or NEBIUS_DEFAULT_BASE_URL)
 
     def generate_json(
         self,
@@ -181,17 +216,23 @@ class StructuredLLMService:
     def _build_provider(self) -> Optional[StructuredJSONProvider]:
         if not self.config.enabled or self.config.provider in {"", "disabled", "none"}:
             return None
-        if self.config.provider == "openai":
-            try:
-                return OpenAIJSONProvider(
-                    api_key=self.config.api_key or "",
-                    model=self.config.model,
-                )
-            except LLMUnavailable as exc:
-                logger.info("Structured LLM provider unavailable: %s", exc)
-                return None
-        logger.info("Unsupported LLM provider '%s'; using fallback wording", self.config.provider)
-        return None
+        provider_classes = {
+            "openai": OpenAIJSONProvider,
+            "nebius": NebiusJSONProvider,
+        }
+        provider_cls = provider_classes.get(self.config.provider)
+        if provider_cls is None:
+            logger.info("Unsupported LLM provider '%s'; using fallback wording", self.config.provider)
+            return None
+        try:
+            return provider_cls(
+                api_key=self.config.api_key or "",
+                model=self.config.model,
+                base_url=self.config.base_url,
+            )
+        except LLMUnavailable as exc:
+            logger.info("Structured LLM provider unavailable: %s", exc)
+            return None
 
     def _call_and_validate(
         self,

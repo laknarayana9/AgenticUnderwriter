@@ -143,6 +143,45 @@ class SentenceTransformerEmbeddingProvider(EmbeddingProvider):
         return np.asarray(vectors, dtype=np.float32)
 
 
+# Nebius Token Factory serves embeddings over an OpenAI-compatible endpoint,
+# so the OpenAI SDK client reaches it by overriding base_url.
+NEBIUS_DEFAULT_BASE_URL = "https://api.studio.nebius.com/v1/"
+
+
+class NebiusEmbeddingProvider(EmbeddingProvider):
+    """
+    Nebius Token Factory embedding provider (OpenAI-compatible).
+
+    Selected with ``EMBEDDING_MODEL=nebius:<model>`` (for example
+    ``nebius:BAAI/bge-en-icl``). Requires ``NEBIUS_API_KEY`` and the ``openai``
+    package; callers fall back to the deterministic hashing provider when the
+    key or package is unavailable so offline runs stay reproducible.
+    """
+
+    def __init__(self, model_name: str, api_key: Optional[str] = None, base_url: Optional[str] = None):
+        api_key = api_key or os.getenv("NEBIUS_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("NEBIUS_API_KEY is not configured")
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise RuntimeError("openai package is not installed") from exc
+        self.model_name = model_name
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=(base_url or os.getenv("NEBIUS_BASE_URL") or NEBIUS_DEFAULT_BASE_URL),
+        )
+
+    def embed(self, texts: List[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, 0), dtype=np.float32)
+        response = self.client.embeddings.create(model=self.model_name, input=texts)
+        vectors = np.asarray([item.embedding for item in response.data], dtype=np.float32)
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        return vectors / norms
+
+
 @dataclass
 class DocumentMetadata:
     """Metadata for ingested documents"""
@@ -264,6 +303,16 @@ class RAGEngine:
             except Exception as e:
                 logger.warning("SentenceTransformer provider unavailable, falling back to lexical: %s", e)
                 return None
+
+        if model.startswith("nebius:"):
+            model_name = model.split(":", 1)[1] or "BAAI/bge-en-icl"
+            try:
+                return NebiusEmbeddingProvider(model_name)
+            except Exception as e:
+                # Keep semantic/hybrid retrieval functional offline by falling
+                # back to the deterministic hashing provider rather than lexical.
+                logger.warning("Nebius embedding provider unavailable, falling back to hashing embeddings: %s", e)
+                return HashingEmbeddingProvider(model_name="hashing-underwriting-v1")
 
         return HashingEmbeddingProvider(model_name=model)
         
