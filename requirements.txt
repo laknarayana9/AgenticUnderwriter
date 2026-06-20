@@ -20,6 +20,9 @@ httpx>=0.25.0
 pytest>=8.0.0
 rich>=13.7.0
 
+# Benchmarking: process memory sampling for the local inference benchmark
+psutil>=5.9.0
+
 # Optional production adapters:
 # chromadb>=0.5.0                 # Persistent vector store for sentence-transformer retrieval
 # opentelemetry-api>=1.24.0       # Trace export adapter
