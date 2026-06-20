@@ -242,27 +242,65 @@ failed, and `2` means the dataset or eval run could not be loaded.
 
 ## Retrieval Config
 
-Lexical retrieval is the default and fallback. Semantic and hybrid retrieval use
-a built-in deterministic hash-embedding provider by default, so the core
-workflow can run without network calls or model downloads.
+Retrieval supports four modes plus an optional cross-encoder rerank stage.
+Lexical is the default and the universal fallback, so the core workflow always
+runs without network calls or model downloads.
 
 ```bash
-RAG_RETRIEVAL_MODE=lexical|semantic|hybrid
+RAG_RETRIEVAL_MODE=lexical|bm25|semantic|hybrid
 RAG_EMBEDDINGS_ENABLED=true|false
 EMBEDDING_MODEL=hashing-underwriting-v1
+RAG_HYBRID_ALPHA=0.5          # semantic weight in RRF (0..1); BM25 gets 1 - alpha
+RAG_RERANK_ENABLED=true|false # cross-encoder rerank of the top-N candidates
+RAG_RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+RAG_RERANK_TOP_N=20
 RAG_CHUNK_STRATEGY=header|fixed
 ```
 
-`EMBEDDING_MODEL` selects the embedding provider:
+- `lexical`: term-frequency scoring with a MUST/SHALL boost. Always available.
+- `bm25`: Okapi BM25 over chunk tokens (`rank_bm25`). No embeddings required.
+- `semantic`: cosine similarity over embeddings.
+- `hybrid`: weighted **Reciprocal Rank Fusion** of the BM25 and semantic
+  rankings, controlled by `RAG_HYBRID_ALPHA`.
 
-- `hashing-underwriting-v1` (default): deterministic local hash embeddings.
-- `nebius:<model>` (e.g. `nebius:BAAI/bge-en-icl`): Nebius Token Factory
-  embeddings over its OpenAI-compatible endpoint, needs `NEBIUS_API_KEY`.
-- `sentence-transformers:<model>`: optional local model when installed.
+When `RAG_RERANK_ENABLED=true`, retrieval pulls a `RAG_RERANK_TOP_N` candidate
+pool in the chosen mode, then a cross-encoder rescores `(query, chunk)` pairs and
+keeps the top-k. Reranked chunks carry `pre_rerank_rank` / `rerank_score` in
+metadata so the reordering is visible in traces.
 
-If a provider is unavailable, semantic and hybrid modes fall back to lexical
-(or, for `nebius:`, to deterministic hashing embeddings) so runs stay
-reproducible offline.
+### Embedding providers — deterministic default, real model for production
+
+`EMBEDDING_MODEL` selects one of three tiers. The default is deterministic *on
+purpose*: it keeps CI and offline runs reproducible. Production should opt into a
+real embedding model.
+
+| `EMBEDDING_MODEL` | Use | Network/download |
+|---|---|---|
+| `hashing-underwriting-v1` (default) | Deterministic hash embeddings — CI, tests, offline reproducibility | none |
+| `sentence-transformers:<model>` (e.g. `all-MiniLM-L6-v2`) | **Recommended for production** semantics | local model download |
+| `nebius:<model>` (e.g. `BAAI/bge-en-icl`) | Hosted embeddings (OpenAI-compatible), needs `NEBIUS_API_KEY` | API call |
+
+The hashing provider is a faithful *interface* stand-in but a weak retriever; a
+real model measurably improves top-1 ranking. On the labeled eval, switching the
+semantic retriever from hashing to `all-MiniLM-L6-v2` lifts `recall@1` from
+**0.55 → 0.67** (see `docs/retrieval_eval.md`). If a provider is unavailable,
+semantic/hybrid fall back to lexical (and `nebius:` falls back to hashing), so
+runs never break.
+
+Install the optional semantic/rerank stack with:
+
+```bash
+pip install -r requirements-rag.txt   # sentence-transformers (embeddings + cross-encoder)
+```
+
+Recommended production retrieval config:
+
+```bash
+RAG_RETRIEVAL_MODE=hybrid
+RAG_EMBEDDINGS_ENABLED=true
+EMBEDDING_MODEL=sentence-transformers:all-MiniLM-L6-v2
+RAG_RERANK_ENABLED=true
+```
 
 `RAG_CHUNK_STRATEGY` switches between header-based chunking (default, keeps
 related rules together) and fixed-size windows. Compare them with

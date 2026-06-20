@@ -1,0 +1,15 @@
+# Optional semantic-retrieval stack.
+#
+# Installs the real embedding model and cross-encoder reranker used in the
+# recommended production retrieval config:
+#
+#   EMBEDDING_MODEL=sentence-transformers:all-MiniLM-L6-v2
+#   RAG_RERANK_ENABLED=true   (cross-encoder/ms-marco-MiniLM-L-6-v2)
+#
+# Kept out of the base requirements.txt so CI and offline runs stay lean and
+# hermetic on the deterministic hashing-embedding default. Install with:
+#
+#   pip install -r requirements-rag.txt
+#
+-r requirements.txt
+sentence-transformers>=2.6.0

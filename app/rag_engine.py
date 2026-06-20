@@ -23,16 +23,30 @@ logger = logging.getLogger(__name__)
 
 RETRIEVAL_MODE_LEXICAL = "lexical"
 RETRIEVAL_MODE_SEMANTIC = "semantic"
+RETRIEVAL_MODE_BM25 = "bm25"
 RETRIEVAL_MODE_HYBRID = "hybrid"
 VALID_RETRIEVAL_MODES = {
     RETRIEVAL_MODE_LEXICAL,
     RETRIEVAL_MODE_SEMANTIC,
+    RETRIEVAL_MODE_BM25,
     RETRIEVAL_MODE_HYBRID,
 }
+
+# Reciprocal Rank Fusion constant. 60 is the value from the original RRF paper
+# (Cormack et al.); it dampens the contribution of low-ranked items.
+RRF_K = 60
+DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 CHUNK_STRATEGY_HEADER = "header"
 CHUNK_STRATEGY_FIXED = "fixed"
 VALID_CHUNK_STRATEGIES = {CHUNK_STRATEGY_HEADER, CHUNK_STRATEGY_FIXED}
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -42,6 +56,14 @@ class RAGRetrievalConfig:
     embeddings_enabled: bool = False
     embedding_model: str = "hashing-underwriting-v1"
     chunk_strategy: str = CHUNK_STRATEGY_HEADER
+    # Hybrid fusion: weight given to the semantic ranked list in Reciprocal Rank
+    # Fusion (0..1). The BM25 list gets (1 - hybrid_alpha). 0.5 = equal weight.
+    hybrid_alpha: float = 0.5
+    # Cross-encoder reranking. Disabled by default so CI stays hermetic (no model
+    # download). When enabled, retrieve top rerank_top_n then rerank down to k.
+    rerank_enabled: bool = False
+    rerank_model: str = DEFAULT_RERANK_MODEL
+    rerank_top_n: int = 20
 
     @classmethod
     def from_env(cls) -> "RAGRetrievalConfig":
@@ -50,12 +72,7 @@ class RAGRetrievalConfig:
             logger.warning("Invalid RAG_RETRIEVAL_MODE=%s; using lexical", mode)
             mode = RETRIEVAL_MODE_LEXICAL
 
-        embeddings_enabled = os.getenv("RAG_EMBEDDINGS_ENABLED", "false").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        embeddings_enabled = _env_flag("RAG_EMBEDDINGS_ENABLED", False)
         embedding_model = os.getenv("EMBEDDING_MODEL", "hashing-underwriting-v1").strip()
 
         chunk_strategy = os.getenv("RAG_CHUNK_STRATEGY", CHUNK_STRATEGY_HEADER).strip().lower()
@@ -63,11 +80,27 @@ class RAGRetrievalConfig:
             logger.warning("Invalid RAG_CHUNK_STRATEGY=%s; using header", chunk_strategy)
             chunk_strategy = CHUNK_STRATEGY_HEADER
 
+        try:
+            hybrid_alpha = float(os.getenv("RAG_HYBRID_ALPHA", "0.5"))
+        except ValueError:
+            logger.warning("Invalid RAG_HYBRID_ALPHA; using 0.5")
+            hybrid_alpha = 0.5
+        hybrid_alpha = max(0.0, min(1.0, hybrid_alpha))
+
+        try:
+            rerank_top_n = int(os.getenv("RAG_RERANK_TOP_N", "20"))
+        except ValueError:
+            rerank_top_n = 20
+
         return cls(
             retrieval_mode=mode,
             embeddings_enabled=embeddings_enabled,
             embedding_model=embedding_model,
             chunk_strategy=chunk_strategy,
+            hybrid_alpha=hybrid_alpha,
+            rerank_enabled=_env_flag("RAG_RERANK_ENABLED", False),
+            rerank_model=os.getenv("RAG_RERANK_MODEL", DEFAULT_RERANK_MODEL).strip(),
+            rerank_top_n=max(1, rerank_top_n),
         )
 
 
@@ -182,6 +215,32 @@ class NebiusEmbeddingProvider(EmbeddingProvider):
         return vectors / norms
 
 
+class CrossEncoderReranker:
+    """
+    Cross-encoder reranker (query, chunk) -> relevance score.
+
+    Wraps sentence-transformers' CrossEncoder. The package and model are loaded
+    lazily so the base install stays lean; callers treat a RuntimeError here as
+    "reranking unavailable" and fall back to the un-reranked ordering, mirroring
+    the embedding-provider fallback pattern.
+    """
+
+    def __init__(self, model_name: str = DEFAULT_RERANK_MODEL):
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError as exc:
+            raise RuntimeError("sentence-transformers is not installed") from exc
+        self.model_name = model_name
+        self.model = CrossEncoder(model_name)
+
+    def score(self, query: str, texts: List[str]) -> List[float]:
+        if not texts:
+            return []
+        pairs = [[query, text] for text in texts]
+        scores = self.model.predict(pairs)
+        return [float(score) for score in scores]
+
+
 @dataclass
 class DocumentMetadata:
     """Metadata for ingested documents"""
@@ -235,6 +294,11 @@ class RAGEngine:
         self.config = config or RAGRetrievalConfig.from_env()
         self.embedding_provider: Optional[EmbeddingProvider] = self._create_embedding_provider()
         self.chunk_embeddings: Optional[np.ndarray] = None
+        # BM25 index over chunk tokens, built lazily at ingest. None until built;
+        # _bm25_tokens stays aligned with self.chunks by position.
+        self._bm25 = None
+        self._bm25_tokens: List[List[str]] = []
+        self._reranker: Optional[CrossEncoderReranker] = self._create_reranker()
         
         self.chunk_size_tokens = 600  # Target tokens per chunk (header strategy)
         self.chunk_overlap = 100      # Character overlap
@@ -312,7 +376,24 @@ class RAGEngine:
                 return HashingEmbeddingProvider(model_name="hashing-underwriting-v1")
 
         return HashingEmbeddingProvider(model_name=model)
-        
+
+    def _create_reranker(self) -> Optional[CrossEncoderReranker]:
+        if not self.config.rerank_enabled:
+            return None
+        try:
+            reranker = CrossEncoderReranker(self.config.rerank_model)
+            logger.info("Cross-encoder reranker initialized: %s", self.config.rerank_model)
+            return reranker
+        except Exception as exc:
+            # Mirror the embedding-provider fallback: log and disable reranking
+            # rather than breaking retrieval when the package/model is missing.
+            logger.warning("Cross-encoder reranker unavailable, disabling rerank: %s", exc)
+            return None
+
+    @property
+    def rerank_active(self) -> bool:
+        return self.config.rerank_enabled and self._reranker is not None
+
     def ingest_documents(self, force_reingest: bool = False) -> Dict[str, Any]:
         """
         Ingest all markdown documents with intelligent chunking
@@ -364,6 +445,9 @@ class RAGEngine:
             self.chunk_embeddings = self.embedding_provider.embed([
                 self._embedding_text(chunk) for chunk in self.chunks
             ])
+
+        # Build the BM25 index over chunk tokens so bm25/hybrid retrieval is ready.
+        self._build_bm25_index()
 
         # Store in ChromaDB when both Chroma and sentence-transformer embeddings
         # are available. Otherwise retrieval uses in-memory lexical/embedding
@@ -718,31 +802,48 @@ class RAGEngine:
         if requested_mode not in VALID_RETRIEVAL_MODES:
             requested_mode = RETRIEVAL_MODE_LEXICAL
 
+        # When reranking is active, retrieve a deeper candidate pool, then let the
+        # cross-encoder pick the final top-k from it.
+        pool_n = max(self.config.rerank_top_n, n_results) if self.rerank_active else n_results
+
         try:
-            if requested_mode == RETRIEVAL_MODE_LEXICAL:
-                return self._lexical_retrieve(query, n_results=n_results, filters=filters)
-
-            if requested_mode == RETRIEVAL_MODE_SEMANTIC:
-                if not self.embeddings_available:
-                    logger.info("Semantic retrieval requested without embeddings; using lexical fallback")
-                    return self._lexical_retrieve(query, n_results=n_results, filters=filters)
-                return self._semantic_retrieve(query, n_results=n_results, filters=filters)
-
-            if requested_mode == RETRIEVAL_MODE_HYBRID:
-                if not self.embeddings_available:
-                    logger.info("Hybrid retrieval requested without embeddings; using lexical fallback")
-                    return self._lexical_retrieve(query, n_results=n_results, filters=filters)
-                return self._hybrid_retrieve(query, n_results=n_results, filters=filters)
-
-            return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+            candidates = self._retrieve_base(requested_mode, query, n_results=pool_n, filters=filters)
         except Exception as e:
             logger.warning("RAG retrieval failed in %s mode, falling back to lexical: %s", requested_mode, e)
-            return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+            candidates = self._lexical_retrieve(query, n_results=pool_n, filters=filters)
+
+        if self.rerank_active:
+            candidates = self._rerank(query, candidates, n_results=n_results)
+
+        return candidates[:n_results]
+
+    def _retrieve_base(self, requested_mode: str, query: str, n_results: int,
+                       filters: Optional[Dict[str, Any]]) -> List[RetrievalChunk]:
+        """Mode dispatch without reranking. Each mode falls back to lexical when
+        its prerequisites (e.g. embeddings) are unavailable, so the governed
+        workflow always receives citable evidence."""
+        if requested_mode == RETRIEVAL_MODE_SEMANTIC:
+            if not self.embeddings_available:
+                logger.info("Semantic retrieval requested without embeddings; using lexical fallback")
+                return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+            return self._semantic_retrieve(query, n_results=n_results, filters=filters)
+
+        if requested_mode == RETRIEVAL_MODE_BM25:
+            return self._bm25_retrieve(query, n_results=n_results, filters=filters)
+
+        if requested_mode == RETRIEVAL_MODE_HYBRID:
+            if not self.embeddings_available:
+                logger.info("Hybrid retrieval requested without embeddings; using lexical fallback")
+                return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+            return self._hybrid_retrieve(query, n_results=n_results, filters=filters)
+
+        return self._lexical_retrieve(query, n_results=n_results, filters=filters)
 
     def compare_retrieval(self, query: str, n_results: int = 5) -> Dict[str, List[RetrievalChunk]]:
-        """Return side-by-side lexical, semantic, and hybrid retrieval results."""
+        """Return side-by-side lexical, bm25, semantic, and hybrid results."""
         return {
             RETRIEVAL_MODE_LEXICAL: self.retrieve(query, n_results=n_results, mode=RETRIEVAL_MODE_LEXICAL),
+            RETRIEVAL_MODE_BM25: self.retrieve(query, n_results=n_results, mode=RETRIEVAL_MODE_BM25),
             RETRIEVAL_MODE_SEMANTIC: self.retrieve(query, n_results=n_results, mode=RETRIEVAL_MODE_SEMANTIC),
             RETRIEVAL_MODE_HYBRID: self.retrieve(query, n_results=n_results, mode=RETRIEVAL_MODE_HYBRID),
         }
@@ -783,33 +884,131 @@ class RAGEngine:
 
     def _hybrid_retrieve(self, query: str, n_results: int = 5,
                          filters: Optional[Dict[str, Any]] = None) -> List[RetrievalChunk]:
-        lexical = self._lexical_retrieve(query, n_results=max(n_results * 3, 10), filters=filters)
-        semantic = self._semantic_retrieve(query, n_results=max(n_results * 3, 10), filters=filters)
+        """
+        Fuse BM25 (lexical relevance) and semantic (embedding) rankings with
+        weighted Reciprocal Rank Fusion.
+
+        RRF combines rankings by position rather than raw score, so the two
+        retrievers' incomparable score scales don't need normalizing. Each list
+        contributes weight / (RRF_K + rank); the semantic list is weighted by
+        ``hybrid_alpha`` and the BM25 list by ``1 - hybrid_alpha``.
+        """
+        depth = max(n_results * 3, self.config.rerank_top_n, 10)
+        bm25 = self._bm25_retrieve(query, n_results=depth, filters=filters)
+        semantic = self._semantic_retrieve(query, n_results=depth, filters=filters)
+
+        alpha = self.config.hybrid_alpha
         merged: Dict[str, RetrievalChunk] = {}
         scores: Dict[str, float] = {}
 
         for rank, chunk in enumerate(semantic):
-            semantic_score = chunk.relevance_score or 0.0
-            rank_boost = 1.0 / (rank + 1)
-            scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (0.65 * semantic_score) + (0.05 * rank_boost)
+            scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + alpha * (1.0 / (RRF_K + rank))
             merged[chunk.chunk_id] = chunk
 
-        for rank, chunk in enumerate(lexical):
-            lexical_score = chunk.relevance_score or 0.0
-            rank_boost = 1.0 / (rank + 1)
-            scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (0.30 * lexical_score) + (0.05 * rank_boost)
+        for rank, chunk in enumerate(bm25):
+            scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (1.0 - alpha) * (1.0 / (RRF_K + rank))
             merged.setdefault(chunk.chunk_id, chunk)
 
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
         results = []
         for chunk_id, score in ranked[:n_results]:
             chunk = merged[chunk_id].model_copy(deep=True)
-            chunk.relevance_score = max(0.0, min(1.0, score))
+            # RRF scores are tiny (~1/60); expose a readable 0..1 relevance by
+            # scaling against the best fused score so downstream consumers and
+            # the evidence-quality check keep working.
+            best = ranked[0][1] or 1.0
+            chunk.relevance_score = max(0.0, min(1.0, score / best))
             chunk.score = chunk.relevance_score
             chunk.metadata["retrieval_mode"] = RETRIEVAL_MODE_HYBRID
+            chunk.metadata["fusion"] = "rrf"
+            chunk.metadata["hybrid_alpha"] = alpha
             chunk.metadata["embedding_model"] = self.embedding_provider.model_name if self.embedding_provider else None
             results.append(chunk)
         return results
+
+    def _bm25_retrieve(self, query: str, n_results: int = 5,
+                       filters: Optional[Dict[str, Any]] = None) -> List[RetrievalChunk]:
+        """
+        BM25 (Okapi) retrieval over chunk tokens.
+
+        Falls back to the deterministic lexical scorer when rank_bm25 is not
+        installed or the index could not be built, so bm25/hybrid modes remain
+        usable (and CI hermetic) without the optional dependency.
+        """
+        if not self.chunks:
+            self.ingest_documents()
+        if self._bm25 is None:
+            self._build_bm25_index()
+        if self._bm25 is None:
+            logger.info("BM25 index unavailable; using lexical fallback")
+            return self._lexical_retrieve(query, n_results=n_results, filters=filters)
+
+        query_tokens = self._bm25_tokenize(query)
+        raw_scores = self._bm25.get_scores(query_tokens)
+        max_score = float(max(raw_scores)) if len(raw_scores) else 0.0
+
+        scored: List[tuple] = []
+        for idx, chunk in enumerate(self.chunks):
+            if filters and any(chunk.metadata.get(key) != value for key, value in filters.items()):
+                continue
+            score = float(raw_scores[idx])
+            if score <= 0:
+                continue
+            chunk_copy = chunk.model_copy(deep=True)
+            chunk_copy.relevance_score = max(0.0, min(1.0, score / max_score)) if max_score > 0 else 0.0
+            chunk_copy.score = chunk_copy.relevance_score
+            chunk_copy.metadata["retrieval_mode"] = RETRIEVAL_MODE_BM25
+            scored.append((score, chunk_copy))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [chunk for _, chunk in scored[:n_results]]
+
+    def _build_bm25_index(self) -> None:
+        """Build the BM25 index over current chunks. No-op (lexical fallback) when
+        rank_bm25 is absent."""
+        if not self.chunks:
+            self._bm25 = None
+            self._bm25_tokens = []
+            return
+        try:
+            from rank_bm25 import BM25Okapi
+        except ImportError:
+            logger.info("rank_bm25 not installed; bm25/hybrid will use lexical fallback")
+            self._bm25 = None
+            self._bm25_tokens = []
+            return
+        self._bm25_tokens = [self._bm25_tokenize(self._embedding_text(chunk)) for chunk in self.chunks]
+        self._bm25 = BM25Okapi(self._bm25_tokens)
+
+    @staticmethod
+    def _bm25_tokenize(text: str) -> List[str]:
+        return [token for token in re.findall(r"[a-z0-9]+", text.lower()) if len(token) > 2]
+
+    def _rerank(self, query: str, chunks: List[RetrievalChunk], n_results: int) -> List[RetrievalChunk]:
+        """Reorder candidate chunks with the cross-encoder and keep the top-k.
+
+        Records the pre-rerank rank and the cross-encoder score on each chunk's
+        metadata so the reordering is visible in retrieval traces (Tier 2.6)."""
+        if not self._reranker or not chunks:
+            return chunks
+        try:
+            scores = self._reranker.score(query, [chunk.text for chunk in chunks])
+        except Exception as exc:
+            logger.warning("Reranker scoring failed, keeping base order: %s", exc)
+            return chunks
+
+        order = sorted(range(len(chunks)), key=lambda i: scores[i], reverse=True)
+        reranked: List[RetrievalChunk] = []
+        for new_rank, original_idx in enumerate(order[:n_results]):
+            chunk = chunks[original_idx].model_copy(deep=True)
+            chunk.metadata["reranked"] = True
+            chunk.metadata["rerank_model"] = self._reranker.model_name
+            chunk.metadata["pre_rerank_rank"] = original_idx
+            chunk.metadata["rerank_score"] = round(float(scores[original_idx]), 4)
+            chunk.relevance_score = float(_sigmoid(scores[original_idx]))
+            chunk.score = chunk.relevance_score
+            reranked.append(chunk)
+        return reranked
 
     def _lexical_retrieve(self, query: str, n_results: int = 5,
                           filters: Optional[Dict[str, Any]] = None) -> List[RetrievalChunk]:
@@ -942,6 +1141,11 @@ def get_rag_engine() -> RAGEngine:
     if _rag_engine_instance is None:
         _rag_engine_instance = RAGEngine()
     return _rag_engine_instance
+
+
+def _sigmoid(value: float) -> float:
+    """Map an unbounded cross-encoder logit to a 0..1 relevance score."""
+    return 1.0 / (1.0 + np.exp(-value))
 
 
 def _load_chromadb():

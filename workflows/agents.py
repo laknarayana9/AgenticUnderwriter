@@ -192,12 +192,19 @@ class RetrievalAgent(BaseAgent):
         query = plan.get("query", "homeowners underwriting eligibility referral decline roof wildfire flood")
         limit = plan.get("limit", 8)
         chunks = self.rag_engine.retrieve(query, n_results=limit) if self.rag_engine else []
+        chunk_dicts = [chunk.model_dump() for chunk in chunks]
+        effective_mode = (
+            self.rag_engine._effective_retrieval_mode() if self.rag_engine else "none"
+        )
+        reranked = any(chunk.get("metadata", {}).get("reranked") for chunk in chunk_dicts)
         return {
             "query": query,
-            "retrieved_chunks": [chunk.model_dump() for chunk in chunks],
+            "retrieved_chunks": chunk_dicts,
             "retrieval_metrics": {
                 "chunk_count": len(chunks),
-                "retriever": "rag_engine" if self.rag_engine else "none"
+                "retriever": "rag_engine" if self.rag_engine else "none",
+                "retrieval_mode": effective_mode,
+                "reranked": reranked,
             },
             "data": data
         }
