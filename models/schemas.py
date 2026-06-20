@@ -199,6 +199,15 @@ class ToolCall(BaseModel):
         return value.isoformat()
 
 
+class CriticVerdict(BaseModel):
+    """Structured result from the CriticAgent rationale verification step."""
+    passed: bool
+    invalid_citation_ids: List[str] = Field(default_factory=list)
+    unsupported_facts: List[str] = Field(default_factory=list)
+    feedback_for_generator: str = ""
+    attempt: int = 0
+
+
 class WorkflowState(BaseModel):
     # Original fields for backward compatibility
     quote_submission: QuoteSubmission
@@ -243,6 +252,10 @@ class WorkflowState(BaseModel):
 
     # Events log
     events: List[Dict[str, Any]] = Field(default_factory=list, description="Event log for audit trail")
+
+    # Generator-critic loop audit fields
+    critic_verdicts: List[Dict[str, Any]] = Field(default_factory=list, description="One entry per critic verification attempt")
+    rationale_retry_count: int = Field(0, description="Number of generator retries triggered by critic")
 
     # Trace information
     trace: Optional[Dict[str, Any]] = Field(None, description="Trace information including phoenix_trace_id, phoenix_url")

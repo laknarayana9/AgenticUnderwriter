@@ -124,3 +124,167 @@ def test_decision_packager_validates_producer_rationale_without_changing_decisio
     assert packet.reason_summary.startswith("This risk is referred")
     assert packet.producer_rationale.source == "llm"
     assert "ROOF_AGE" in packet.review_reason_codes
+
+
+# ---------------------------------------------------------------------------
+# mask_map wiring: PII must not reach the LLM prompt
+# ---------------------------------------------------------------------------
+
+class CapturingProvider:
+    """Records every user_prompt it receives so tests can inspect them."""
+
+    provider_name = "capturing"
+    model = "capturing-model"
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls: list = []
+
+    def generate_json(self, system_prompt, user_prompt, schema):
+        self.calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt})
+        return self.payload
+
+
+def test_pii_masked_before_rationale_llm_call():
+    """mask_map must scrub name and address out of the user_prompt sent to the LLM."""
+    provider = CapturingProvider({
+        "summary": "Property accepted under HO3 guidelines.",
+        "supporting_facts": ["roof_age_years: 5"],
+        "citation_chunk_ids": [],
+    })
+    service = StructuredLLMService(
+        config=LLMServiceConfig(provider="disabled"),
+        provider=provider,
+    )
+
+    mask_map = {
+        "[APPLICANT_NAME]": "Jane Smith",
+        "[PROPERTY_ADDRESS]": "742 Evergreen Terrace, Springfield, IL 62701",
+    }
+    decision_data = {
+        "decision": "ACCEPT",
+        "confidence": 0.95,
+        "risk_factors": [],
+        "facts_used": {
+            "applicant_name": "Jane Smith",
+            "property_address": "742 Evergreen Terrace, Springfield, IL 62701",
+            "roof_age_years": 5,
+        },
+        "reasoning": "Clean risk for Jane Smith at 742 Evergreen Terrace, Springfield, IL 62701.",
+    }
+
+    service.generate_producer_rationale(
+        decision_data=decision_data,
+        citations=[],
+        fallback_summary="Accepted.",
+        mask_map=mask_map,
+    )
+
+    assert provider.calls, "expected at least one LLM call"
+    prompt = provider.calls[0]["user_prompt"]
+    assert "Jane Smith" not in prompt
+    assert "742 Evergreen Terrace" not in prompt
+    assert "[APPLICANT_NAME]" in prompt or "[PROPERTY_ADDRESS]" in prompt
+
+
+def test_no_mask_map_still_calls_llm():
+    """Omitting mask_map must not break the call — just no scrubbing."""
+    provider = CapturingProvider({
+        "summary": "Referred due to elevated wildfire exposure.",
+        "supporting_facts": ["wildfire_band: High"],
+        "citation_chunk_ids": [],
+    })
+    service = StructuredLLMService(
+        config=LLMServiceConfig(provider="disabled"),
+        provider=provider,
+    )
+
+    result = service.generate_producer_rationale(
+        decision_data={"decision": "REFER", "confidence": 0.7, "risk_factors": [], "facts_used": {}},
+        citations=[],
+        fallback_summary="Referred.",
+    )
+
+    assert result.source == "llm"
+    assert provider.calls
+
+
+def test_packager_threads_mask_map_to_llm_service():
+    """DecisionPackagerAgent.package(mask_map=...) must forward the map to generate_producer_rationale."""
+    provider = CapturingProvider({
+        "summary": "REFER — elevated hazard.",
+        "supporting_facts": ["wildfire_band: Severe"],
+        "citation_chunk_ids": [],
+    })
+    service = StructuredLLMService(
+        config=LLMServiceConfig(provider="disabled"),
+        provider=provider,
+    )
+    packager = DecisionPackagerAgent(llm_service=service)
+
+    mask_map = {"[APPLICANT_NAME]": "Bob Tester", "[PROPERTY_ADDRESS]": "1 Fire Lane, CA 95000"}
+    decision_data = {
+        "decision": "REFER",
+        "confidence": 0.75,
+        "reasoning": "Bob Tester at 1 Fire Lane, CA 95000 is in a severe wildfire zone.",
+        "risk_factors": [{"code": "WILDFIRE_HIGH", "because": "Severe zone."}],
+        "facts_used": {"wildfire_band": "Severe"},
+        "citations": [],
+    }
+
+    packager.package(decision_data, {"annual_premium": 0}, [], mask_map=mask_map)
+
+    assert provider.calls
+    prompt = provider.calls[0]["user_prompt"]
+    assert "Bob Tester" not in prompt
+    assert "1 Fire Lane" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# compare_models.py: fallback must not count as JSON valid
+# ---------------------------------------------------------------------------
+
+def test_fallback_output_not_counted_as_json_valid(monkeypatch):
+    """When the provider is unavailable and service returns source='fallback',
+    run_provider must mark json_valid=False and populate error."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from scripts.compare_models import run_provider
+
+    cases = [
+        {
+            "id": "test-fallback-case",
+            "submission": {
+                "applicant": {"full_name": "Test User"},
+                "risk": {
+                    "property_address": "1 Main St, CA",
+                    "occupancy": "owner_occupied_primary",
+                    "dwelling_type": "single_family",
+                    "year_built": 2010,
+                    "roof_age_years": 5,
+                    "construction_type": "frame",
+                    "stories": 1,
+                },
+                "coverage_request": {"coverage_a": 400000},
+            },
+            "expected": {"decision": "ACCEPT", "reason_codes": [], "gold_citations": []},
+        }
+    ]
+
+    # Use a provider that has no API key set so StructuredLLMService returns fallback
+    results = run_provider("openai", "gpt-4o-mini", cases)
+
+    assert len(results) == 1
+    r = results[0]
+    # When the provider is unavailable the service silently returns source="fallback";
+    # that must be reported as not-valid so the comparison table is honest.
+    assert not r.json_valid, "fallback output must not be counted as json_valid"
+    assert not r.schema_valid
+    assert r.error is not None

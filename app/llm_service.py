@@ -15,7 +15,9 @@ from app.prompt_templates import (
     MISSING_INFO_USER_TEMPLATE,
     PRODUCER_RATIONALE_SYSTEM_PROMPT,
     PRODUCER_RATIONALE_USER_TEMPLATE,
+    PRODUCER_RATIONALE_RETRY_SUFFIX,
 )
+from app.pii_masker import MaskMap, PIIMasker
 from models.schemas import (
     MissingInfoQuestionBatch,
     MissingInfoQuestionOutput,
@@ -64,11 +66,21 @@ class LLMServiceConfig:
     def from_env(cls) -> "LLMServiceConfig":
         provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
         if provider == "nebius":
-            # Prefer a Nebius-specific key but fall back to the generic key so a
-            # single key var can drive either OpenAI-compatible host.
             api_key = os.getenv("NEBIUS_API_KEY") or os.getenv("OPENAI_API_KEY")
             base_url = os.getenv("NEBIUS_BASE_URL", NEBIUS_DEFAULT_BASE_URL).strip()
             default_model = "meta-llama/Llama-3.3-70B-Instruct"
+        elif provider == "claude":
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            base_url = None
+            default_model = "claude-sonnet-4-6"
+        elif provider == "gemini":
+            api_key = os.getenv("GOOGLE_API_KEY")
+            base_url = None
+            default_model = "gemini-1.5-flash"
+        elif provider == "ollama":
+            api_key = ""  # not used
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+            default_model = os.getenv("OLLAMA_MODEL", "llama3.2").strip()
         else:
             api_key = os.getenv("OPENAI_API_KEY")
             base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
@@ -107,15 +119,6 @@ class OpenAIJSONProvider:
         self.client = OpenAI(**client_kwargs)
         self.model = model
 
-
-class NebiusJSONProvider(OpenAIJSONProvider):
-    """Nebius Token Factory adapter (OpenAI-compatible chat completions)."""
-
-    provider_name = "nebius"
-
-    def __init__(self, api_key: str, model: str, base_url: Optional[str] = None):
-        super().__init__(api_key=api_key, model=model, base_url=base_url or NEBIUS_DEFAULT_BASE_URL)
-
     def generate_json(
         self,
         system_prompt: str,
@@ -141,6 +144,15 @@ class NebiusJSONProvider(OpenAIJSONProvider):
         return json.loads(content)
 
 
+class NebiusJSONProvider(OpenAIJSONProvider):
+    """Nebius Token Factory adapter (OpenAI-compatible chat completions)."""
+
+    provider_name = "nebius"
+
+    def __init__(self, api_key: str, model: str, base_url: Optional[str] = None):
+        super().__init__(api_key=api_key, model=model, base_url=base_url or NEBIUS_DEFAULT_BASE_URL)
+
+
 class StructuredLLMService:
     """
     Narrow LLM facade for wording assistance.
@@ -162,10 +174,23 @@ class StructuredLLMService:
         decision_data: Dict[str, Any],
         citations: List[Dict[str, Any]],
         fallback_summary: str,
+        mask_map: Optional[MaskMap] = None,
     ) -> ProducerRationaleOutput:
+        # _force_fallback is set by the critic loop after max retries are exhausted
+        if decision_data.get("_force_fallback"):
+            return self._fallback_rationale(decision_data, citations, fallback_summary)
+
         fallback = self._fallback_rationale(decision_data, citations, fallback_summary)
         if not self.provider:
             return fallback
+
+        # Use the caller-supplied mask_map (built from the original submission) so
+        # that PII values from risk_factors, facts_used, citations, and fallback_summary
+        # are all scrubbed, not just fields that happen to sit under applicant.* / risk.*.
+        masker = PIIMasker()
+        active_map: MaskMap = mask_map or {}
+        if active_map:
+            logger.debug("PII masked before LLM call: %s", masker.fields_masked(active_map))
 
         prompt = PRODUCER_RATIONALE_USER_TEMPLATE.format(
             decision=decision_data.get("decision") or decision_data.get("preliminary_decision"),
@@ -175,6 +200,15 @@ class StructuredLLMService:
             citations=json.dumps(_summarize_citations(citations), sort_keys=True),
             fallback_summary=fallback_summary,
         )
+        # Scrub the full rendered prompt in one pass using the real PII values
+        prompt = masker.mask_text(prompt, active_map)
+
+        # Append critic feedback when this is a retry attempt
+        critic_feedback = decision_data.get("critic_feedback", "")
+        if critic_feedback:
+            prompt = prompt + "\n\n" + PRODUCER_RATIONALE_RETRY_SUFFIX.format(
+                critic_feedback=masker.mask_text(critic_feedback, active_map)
+            )
 
         try:
             output = self._call_and_validate(
@@ -197,10 +231,17 @@ class StructuredLLMService:
         if not questions or not self.provider:
             return [_question_payload(question, source="fallback") for question in questions]
 
+        masker = PIIMasker()
+        masked_context, mask_map = masker.mask_submission_context(submission_context or {})
+        if mask_map:
+            logger.debug("PII masked before LLM call: %s", masker.fields_masked(mask_map))
+
         prompt = MISSING_INFO_USER_TEMPLATE.format(
-            submission_context=json.dumps(submission_context or {}, sort_keys=True),
+            submission_context=json.dumps(masked_context, sort_keys=True),
             questions=json.dumps(fallback, sort_keys=True),
         )
+        # Second-pass scrub: catch PII that leaked through serialized question context blobs
+        prompt = masker.mask_text(prompt, mask_map)
 
         try:
             batch = self._call_and_validate(
@@ -216,9 +257,16 @@ class StructuredLLMService:
     def _build_provider(self) -> Optional[StructuredJSONProvider]:
         if not self.config.enabled or self.config.provider in {"", "disabled", "none"}:
             return None
+        # Lazy imports so missing optional SDKs don't break the base install
+        from app.providers.claude_provider import ClaudeJSONProvider
+        from app.providers.gemini_provider import GeminiJSONProvider
+        from app.providers.ollama_provider import OllamaJSONProvider
         provider_classes = {
             "openai": OpenAIJSONProvider,
             "nebius": NebiusJSONProvider,
+            "claude": ClaudeJSONProvider,
+            "gemini": GeminiJSONProvider,
+            "ollama": OllamaJSONProvider,
         }
         provider_cls = provider_classes.get(self.config.provider)
         if provider_cls is None:

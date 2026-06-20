@@ -274,7 +274,7 @@ class DecisionPackagerAgent(BaseAgent):
         super().__init__(prompt_version=prompt_version)
         self.llm_service = llm_service or StructuredLLMService()
     
-    def package(self, decision_data: Dict[str, Any], rating_data: Any, citations: List) -> DecisionPacket:
+    def package(self, decision_data: Dict[str, Any], rating_data: Any, citations: List, mask_map: Optional[Dict[str, str]] = None) -> DecisionPacket:
         """Package final decisions"""
         logger.info("Packaging decision")
 
@@ -296,6 +296,7 @@ class DecisionPackagerAgent(BaseAgent):
             decision_data=decision_data,
             citations=evidence,
             fallback_summary=fallback_summary,
+            mask_map=mask_map,
         )
 
         return DecisionPacket(

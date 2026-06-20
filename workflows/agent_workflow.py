@@ -4,6 +4,7 @@ Governed underwriting workflow using specialized agent role boundaries.
 Implements the canonical HO3 quote-to-underwrite flow with deterministic
 eligibility decisioning, cited evidence, pause/resume, rating, and HITL review.
 """
+import os
 import uuid
 from copy import deepcopy
 from typing import Dict, Any, List, Optional
@@ -25,6 +26,8 @@ from workflows.agents import (
 from workflows.hitl import get_hitl_workflow
 from app.rag_engine import RAGEngine
 from app.rating import RatingTool
+from app.pii_masker import PIIMasker
+from workflows.critic import CriticAgent
 
 
 class UnderwritingWorkflow:
@@ -55,6 +58,10 @@ class UnderwritingWorkflow:
         
         # Initialize HITL workflow
         self.hitl_workflow = get_hitl_workflow(db)
+
+        # Initialize critic agent (distinct LLM from generator, configured via CRITIC_LLM_* env vars)
+        self.critic_agent = CriticAgent()
+        self._critic_max_retries = int(os.getenv("CRITIC_MAX_RETRIES", "2"))
 
     def run(self, submission_raw: Dict[str, Any]) -> WorkflowState:
         """
@@ -235,15 +242,76 @@ class UnderwritingWorkflow:
                     )
                     workflow_state.rating = rating_result
 
-                # Step 8: Decision Packaging
+                # Step 8: Decision Packaging with generator-critic loop
+                # PII is masked inside StructuredLLMService before any LLM call.
                 with tracer.start_as_current_span("decision_packaging"):
                     workflow_state.current_node = "decision_packaging"
+
+                    # Log which PII fields will be masked (no values logged)
+                    _masker = PIIMasker()
+                    _, _mask_map = _masker.mask_submission_context(submission_raw)
+                    _masked_fields = _masker.fields_masked(_mask_map)
+                    if _masked_fields:
+                        workflow_state.events.append({
+                            "event": "pii_masked",
+                            "timestamp": datetime.now().isoformat(),
+                            "fields_masked": _masked_fields,
+                        })
+
                     workflow_steps_summary = self._summarize_completed_workflow_steps(workflow_state)
-                    decision_packet = self.decision_packager.package(
-                        assessment_result,
-                        rating_result,
-                        workflow_steps_summary
-                    )
+                    retrieved_chunks = (workflow_state.retrieval or {}).get("retrieved_chunks", [])
+                    facts_used = assessment_result.get("facts_used", {})
+
+                    decision_packet = None
+                    for attempt in range(self._critic_max_retries + 1):
+                        decision_packet = self.decision_packager.package(
+                            assessment_result,
+                            rating_result,
+                            workflow_steps_summary,
+                            mask_map=_mask_map,
+                        )
+
+                        # Critic verifies the LLM-generated rationale.
+                        # Pass _mask_map so the critic can scrub PII from its own prompt.
+                        verdict = self.critic_agent.verify_rationale(
+                            rationale=decision_packet.producer_rationale,
+                            retrieved_chunks=retrieved_chunks,
+                            facts_used=facts_used,
+                            attempt=attempt,
+                            mask_map=_mask_map,
+                        )
+                        workflow_state.critic_verdicts.append(verdict.model_dump())
+                        workflow_state.events.append({
+                            "event": "critic_verdict",
+                            "timestamp": datetime.now().isoformat(),
+                            "attempt": attempt,
+                            "passed": verdict.passed,
+                            "invalid_citations": verdict.invalid_citation_ids,
+                            "unsupported_facts": verdict.unsupported_facts,
+                        })
+
+                        if verdict.passed:
+                            break
+
+                        if attempt < self._critic_max_retries:
+                            # Feed structured feedback to the generator on the next pass
+                            assessment_result["critic_feedback"] = verdict.feedback_for_generator
+                        else:
+                            # Exhausted retries — emit a deterministic fallback rationale
+                            workflow_state.events.append({
+                                "event": "critic_fallback",
+                                "timestamp": datetime.now().isoformat(),
+                                "reason": "critic rejected rationale after max retries; using deterministic fallback",
+                            })
+                            from app.prompt_templates import PRODUCER_RATIONALE_RETRY_SUFFIX  # noqa: F401 (import unused but documents intent)
+                            # Re-package with fallback forced by disabling LLM for this call
+                            decision_packet = self.decision_packager.package(
+                                {**assessment_result, "_force_fallback": True},
+                                rating_result,
+                                workflow_steps_summary,
+                            )
+
+                    workflow_state.rationale_retry_count = max(0, len(workflow_state.critic_verdicts) - 1)
                     workflow_state.decision_packet = decision_packet
 
                 if decision_packet.needs_human_review:

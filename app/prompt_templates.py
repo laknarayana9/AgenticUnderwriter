@@ -24,6 +24,17 @@ Write a clear summary for the producer and list the supporting facts and
 citation chunk IDs that justify the already-decided outcome.
 """.strip()
 
+# Used on retry attempts when the critic has returned feedback.
+PRODUCER_RATIONALE_RETRY_SUFFIX = """
+
+--- CRITIC FEEDBACK (previous attempt was rejected) ---
+{critic_feedback}
+
+Revise your response to address the critic's feedback. Only cite chunk IDs
+that appear in the Citations list above. Remove any claims not supported by
+the provided evidence.
+""".strip()
+
 
 MISSING_INFO_SYSTEM_PROMPT = """
 You write targeted producer or agent follow-up questions for missing
