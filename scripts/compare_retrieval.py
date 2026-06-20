@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from app.rag_engine import (  # noqa: E402
     RAGEngine,
     RAGRetrievalConfig,
+    RETRIEVAL_MODE_BM25,
     RETRIEVAL_MODE_HYBRID,
     RETRIEVAL_MODE_LEXICAL,
     RETRIEVAL_MODE_SEMANTIC,
@@ -49,8 +50,32 @@ def main() -> None:
     print(f"embedding_model: {summary['embedding_model'] or 'none'}")
 
     comparisons = rag.compare_retrieval(args.query, n_results=args.limit)
-    for mode in [RETRIEVAL_MODE_LEXICAL, RETRIEVAL_MODE_SEMANTIC, RETRIEVAL_MODE_HYBRID]:
+    for mode in [RETRIEVAL_MODE_LEXICAL, RETRIEVAL_MODE_BM25, RETRIEVAL_MODE_SEMANTIC, RETRIEVAL_MODE_HYBRID]:
         print_results(mode, comparisons[mode])
+
+    if args.rerank:
+        _print_reranked(args)
+
+
+def _print_reranked(args: argparse.Namespace) -> None:
+    """Show hybrid+cross-encoder rerank. Degrades gracefully when the
+    sentence-transformers model is unavailable."""
+    config = RAGRetrievalConfig(
+        retrieval_mode=RETRIEVAL_MODE_HYBRID,
+        embeddings_enabled=not args.no_embeddings,
+        embedding_model=args.embedding_model,
+        rerank_enabled=True,
+    )
+    rag = RAGEngine(config=config)
+    with redirect_stdout(StringIO()):
+        rag.ingest_documents()
+    if not rag.rerank_active:
+        print("\nHYBRID+RERANK RESULTS")
+        print("-" * 80)
+        print("   (reranker unavailable — install sentence-transformers to enable)")
+        return
+    chunks = rag.retrieve(args.query, n_results=args.limit, mode=RETRIEVAL_MODE_HYBRID)
+    print_results("hybrid+rerank", chunks)
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,6 +91,11 @@ def parse_args() -> argparse.Namespace:
         "--no-embeddings",
         action="store_true",
         help="Disable embeddings to show semantic/hybrid fallback to lexical retrieval.",
+    )
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Also show hybrid results reranked by a cross-encoder (requires sentence-transformers).",
     )
     return parser.parse_args()
 
