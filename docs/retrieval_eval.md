@@ -77,6 +77,34 @@ RAG_RETRIEVAL_MODE=bm25 PYTHONPATH=. python -m evals.run \
   `rerank_score`, and `rerank_model` in metadata, and `RetrievalAgent` surfaces
   `retrieval_mode` / `reranked` in `retrieval_metrics` for Tier 2.6 observability.
 
+## Tier 1.2 — real embeddings vs the deterministic default
+
+The 1.1 results above use the deterministic `hashing-underwriting-v1` provider
+(the CI/offline default). 1.1 flagged that this weak provider was dragging the
+semantic and hybrid rankings down. 1.2 swaps in a real model
+(`sentence-transformers:all-MiniLM-L6-v2`) and re-measures.
+
+| retriever | embeddings | recall@1 | recall@3 | recall@5 |
+|---|---|---|---|---|
+| semantic | hashing (default) | 0.553 | 0.757 | 0.965 |
+| **semantic** | **all-MiniLM-L6-v2** | **0.671** | 0.863 | 0.953 |
+| hybrid (RRF) | hashing | 0.553 | 0.796 | 0.984 |
+| hybrid (RRF) | all-MiniLM-L6-v2 | 0.588 | 0.863 | 0.977 |
+
+**Takeaways:**
+
+- A real embedding model lifts **semantic recall@1 from 0.553 → 0.671 (+21%
+  relative)**, confirming the hashing provider — not the retrieval logic — was the
+  1.1 bottleneck. With real embeddings, semantic alone (0.671) now edges out
+  BM25-alone (0.614) at top-1.
+- The deterministic default stays in place *by design*: it is the reproducible
+  fallback for CI and offline runs, not the recommended production retriever.
+  This is the engineering point — reproducibility by default, real semantics
+  opt-in via one env var.
+- For this small, lexically-friendly corpus, `RAG_HYBRID_ALPHA` is worth tuning
+  upward (favor the now-stronger semantic list); the default 0.5 is a safe
+  starting point, not a tuned optimum.
+
 ## Recommended production config
 
 ```bash
@@ -87,3 +115,5 @@ RAG_HYBRID_ALPHA=0.5
 RAG_RERANK_ENABLED=true                                  # ms-marco cross-encoder
 RAG_RERANK_TOP_N=20
 ```
+
+Install the semantic/rerank stack with `pip install -r requirements-rag.txt`.

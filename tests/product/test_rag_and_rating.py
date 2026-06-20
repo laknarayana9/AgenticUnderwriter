@@ -72,6 +72,45 @@ def test_semantic_mode_returns_structured_citation_results(tmp_path):
         assert chunk.metadata["embedding_model"] == "hashing-underwriting-v1"
 
 
+@pytest.mark.skipif(not _CROSS_ENCODER_AVAILABLE, reason="sentence-transformers not installed")
+def test_sentence_transformer_embeddings_produce_semantic_results(tmp_path):
+    """The real embedding provider (not the hashing default) drives semantic mode."""
+    rag = RAGEngine(
+        chroma_path=str(tmp_path / "chroma"),
+        config=RAGRetrievalConfig(
+            retrieval_mode=RETRIEVAL_MODE_SEMANTIC,
+            embeddings_enabled=True,
+            embedding_model="sentence-transformers:all-MiniLM-L6-v2",
+        ),
+    )
+    summary = rag.ingest_documents()
+
+    assert summary["effective_retrieval_mode"] == RETRIEVAL_MODE_SEMANTIC
+    assert summary["embedding_model"] == "all-MiniLM-L6-v2"
+
+    chunks = rag.retrieve("how old can a roof be before referral", n_results=3)
+    assert chunks
+    for chunk in chunks:
+        assert chunk.relevance_score is not None
+        assert chunk.metadata["retrieval_mode"] == RETRIEVAL_MODE_SEMANTIC
+        assert chunk.metadata["embedding_model"] == "all-MiniLM-L6-v2"
+
+
+def test_unknown_embedding_model_falls_back_to_hashing(tmp_path):
+    """A non-ST, non-nebius model name uses deterministic hashing embeddings."""
+    rag = RAGEngine(
+        chroma_path=str(tmp_path / "chroma"),
+        config=RAGRetrievalConfig(
+            retrieval_mode=RETRIEVAL_MODE_SEMANTIC,
+            embeddings_enabled=True,
+            embedding_model="hashing-underwriting-v1",
+        ),
+    )
+    rag.ingest_documents()
+    assert rag.embeddings_available
+    assert rag.embedding_provider.model_name == "hashing-underwriting-v1"
+
+
 def test_rag_config_reads_environment(monkeypatch):
     monkeypatch.setenv("RAG_RETRIEVAL_MODE", "hybrid")
     monkeypatch.setenv("RAG_EMBEDDINGS_ENABLED", "true")
