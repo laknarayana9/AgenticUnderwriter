@@ -27,3 +27,8 @@ rich>=13.7.0
 # prometheus-client>=0.17.0       # Metrics endpoint integration
 # redis>=5.0.0                    # Queue/cache backing services
 # sentence-transformers>=2.6.0    # Local embedding model provider
+
+# Optional multi-model provider SDKs (install whichever you use):
+# anthropic>=0.25.0               # Claude provider: pip install anthropic
+# google-generativeai>=0.5.0      # Gemini provider: pip install google-generativeai
+# ollama>=0.2.0                   # Ollama Python SDK (optional — provider uses raw HTTP by default)
