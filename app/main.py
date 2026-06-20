@@ -9,6 +9,7 @@ from datetime import datetime
 from models.schemas import DecisionType, HumanReviewRecord, QuoteSubmission, RunRecord, WorkflowState, HO3Submission
 from workflows import UnderwritingWorkflow
 from storage.database import db
+from observability import get_metrics_summary
 
 workflow = UnderwritingWorkflow(db=db)
 
@@ -652,9 +653,20 @@ async def get_run_audit(run_id: str):
 @app.get("/stats")
 async def get_statistics():
     """
-    Get basic statistics about the system.
+    Get basic statistics about the system, including live quality metrics.
     """
-    return db.get_statistics()
+    stats = db.get_statistics()
+    stats["quality_metrics"] = get_metrics_summary()
+    return stats
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Live request-quality metrics: latency p50/p95, failure rate, citation
+    coverage (grounding of REFER/DECLINE decisions), LLM usage, and cost.
+    """
+    return get_metrics_summary()
 
 
 @app.get("/health")

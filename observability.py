@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Deque, Dict, List, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -186,3 +188,152 @@ def record_workflow_latency(workflow_name: str, duration_ms: float) -> None:
     with tracer.start_as_current_span("workflow_latency") as span:
         span.set_attribute("workflow.name", workflow_name)
         span.set_attribute("workflow.duration_ms", duration_ms)
+
+
+# ---------------------------------------------------------------------------
+# Request-level quality metrics (Tier 2.6)
+#
+# SRE-style production signals on top of tracing: latency percentiles,
+# cost/request, citation coverage (grounding), and failure rate. Kept in-process
+# (bounded ring buffer) so it works with zero infrastructure; an optional Langfuse
+# sink mirrors each metric when configured.
+# ---------------------------------------------------------------------------
+
+_ADVERSE_DECISIONS = {"REFER", "DECLINE"}
+
+
+@dataclass
+class RequestMetric:
+    """One processed quote run."""
+    run_id: str
+    latency_ms: float
+    status: str
+    decision: Optional[str] = None
+    has_citations: bool = False
+    llm_used: bool = False
+    estimated_cost_usd: float = 0.0
+    timestamp: float = field(default_factory=time.time)
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status != "failed"
+
+    @property
+    def is_adverse(self) -> bool:
+        return (self.decision or "").upper() in _ADVERSE_DECISIONS
+
+
+def _percentile(values: List[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = min(int(len(ordered) * pct), len(ordered) - 1)
+    return ordered[idx]
+
+
+class MetricsCollector:
+    """Thread-safe bounded collector of request metrics with summary aggregation."""
+
+    def __init__(self, maxlen: int = 1000):
+        self._metrics: Deque[RequestMetric] = deque(maxlen=maxlen)
+        self._lock = threading.Lock()
+        self._langfuse = _LangfuseSink()
+
+    def record(self, metric: RequestMetric) -> None:
+        with self._lock:
+            self._metrics.append(metric)
+        self._langfuse.emit(metric)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._metrics.clear()
+
+    def summary(self) -> Dict[str, Any]:
+        with self._lock:
+            metrics = list(self._metrics)
+        if not metrics:
+            return {"requests": 0}
+
+        latencies = [m.latency_ms for m in metrics]
+        failures = [m for m in metrics if not m.succeeded]
+        adverse = [m for m in metrics if m.is_adverse]
+        adverse_cited = [m for m in adverse if m.has_citations]
+        costs = [m.estimated_cost_usd for m in metrics]
+
+        return {
+            "requests": len(metrics),
+            "failure_rate": round(len(failures) / len(metrics), 4),
+            "latency_p50_ms": round(_percentile(latencies, 0.50), 1),
+            "latency_p95_ms": round(_percentile(latencies, 0.95), 1),
+            # Grounding: adverse (REFER/DECLINE) decisions are the ones that must
+            # cite guideline evidence. null when there are no adverse decisions yet.
+            "citation_coverage": round(len(adverse_cited) / len(adverse), 4) if adverse else None,
+            "adverse_decisions": len(adverse),
+            "llm_usage_rate": round(sum(1 for m in metrics if m.llm_used) / len(metrics), 4),
+            "total_cost_usd": round(sum(costs), 6),
+            "avg_cost_per_request_usd": round(sum(costs) / len(metrics), 6),
+            "decisions": _decision_counts(metrics),
+        }
+
+
+def _decision_counts(metrics: List[RequestMetric]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for metric in metrics:
+        if metric.decision:
+            counts[metric.decision] = counts.get(metric.decision, 0) + 1
+    return counts
+
+
+class _LangfuseSink:
+    """Optional Langfuse mirror. A graceful no-op unless the package is installed
+    and LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY are set — so it never blocks the
+    request path or CI."""
+
+    def __init__(self):
+        self._client = None
+        if not (os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY")):
+            return
+        try:
+            from langfuse import Langfuse
+            self._client = Langfuse()
+            logger.info("Langfuse metrics sink enabled")
+        except Exception as exc:  # import or auth failure → stay a no-op
+            logger.info("Langfuse sink unavailable, metrics stay in-process: %s", exc)
+            self._client = None
+
+    def emit(self, metric: RequestMetric) -> None:
+        if self._client is None:
+            return
+        try:
+            self._client.trace(
+                name="underwriting_request",
+                metadata={
+                    "run_id": metric.run_id,
+                    "status": metric.status,
+                    "decision": metric.decision,
+                    "latency_ms": metric.latency_ms,
+                    "has_citations": metric.has_citations,
+                    "llm_used": metric.llm_used,
+                    "estimated_cost_usd": metric.estimated_cost_usd,
+                },
+            )
+        except Exception as exc:
+            logger.debug("Langfuse emit failed (ignored): %s", exc)
+
+
+_metrics_collector = MetricsCollector()
+
+
+def record_request_metric(metric: RequestMetric) -> None:
+    """Record one processed request into the global metrics collector."""
+    _metrics_collector.record(metric)
+
+
+def get_metrics_summary() -> Dict[str, Any]:
+    """Aggregate request metrics: latency p50/p95, failure rate, citation coverage, cost."""
+    return _metrics_collector.summary()
+
+
+def clear_request_metrics() -> None:
+    """Reset the metrics collector (tests)."""
+    _metrics_collector.clear()

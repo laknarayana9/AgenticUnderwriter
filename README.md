@@ -514,6 +514,12 @@ OpenTelemetry when the host environment provides the SDK configuration.
 Decision packets include trace references so workflow output can be joined to
 span data.
 
+On top of tracing, request-level **quality metrics** (latency p50/p95, failure
+rate, citation coverage, LLM usage, and cost) are recorded per run and served at
+`GET /metrics` (and embedded in `GET /stats`). An optional Langfuse sink mirrors
+them when configured, and is a graceful no-op otherwise so CI stays hermetic.
+See `docs/observability.md`.
+
 ## Production Hardening Roadmap
 
 The next production hardening steps are clear and modular: connect external
