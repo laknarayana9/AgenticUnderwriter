@@ -11,4 +11,5 @@ storage/*.db-shm
 storage/chroma_db/
 storage/knowledge_base/
 evals/reports/
+finetune/data/
 .DS_Store
