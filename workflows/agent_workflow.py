@@ -12,7 +12,12 @@ from datetime import datetime
 import time
 
 from models.schemas import HO3Submission, WorkflowState, QuoteSubmission
-from observability import get_tracer, record_workflow_latency
+from observability import (
+    RequestMetric,
+    get_tracer,
+    record_request_metric,
+    record_workflow_latency,
+)
 from app.llm_service import StructuredLLMService
 from workflows.agents import (
     IntakeNormalizerAgent,
@@ -343,6 +348,7 @@ class UnderwritingWorkflow:
                 span.set_attribute("workflow.duration_ms", workflow_duration * 1000)
                 span.set_attribute("workflow.status", workflow_state.status)
 
+                self._record_request_metric(workflow_state, workflow_duration * 1000)
                 return workflow_state
 
             except Exception as e:
@@ -353,7 +359,49 @@ class UnderwritingWorkflow:
                     "error": str(e)
                 })
                 span.set_attribute("error", str(e))
+                self._record_request_metric(workflow_state, (time.time() - workflow_start) * 1000)
                 raise
+
+    def _record_request_metric(self, workflow_state: WorkflowState, latency_ms: float) -> None:
+        """Emit a request-level quality metric (latency, grounding, cost, outcome)."""
+        packet = workflow_state.decision_packet
+        decision = packet.decision.value if packet else None
+        has_citations = bool(packet.citations) if packet else False
+        llm_used = bool(
+            packet
+            and packet.producer_rationale
+            and packet.producer_rationale.source == "llm"
+        )
+        record_request_metric(RequestMetric(
+            run_id=workflow_state.run_id or "",
+            latency_ms=round(latency_ms, 1),
+            status=workflow_state.status,
+            decision=decision,
+            has_citations=has_citations,
+            llm_used=llm_used,
+            estimated_cost_usd=self._estimate_request_cost(packet, llm_used),
+        ))
+
+    @staticmethod
+    def _estimate_request_cost(packet, llm_used: bool) -> float:
+        """Coarse per-request LLM cost estimate.
+
+        Zero unless an LLM actually produced the rationale. Uses a configurable
+        blended rate (LLM_COST_PER_1K_USD, default 0) so no provider pricing is
+        invented in the core workflow; operators set the rate for their model.
+        """
+        if not llm_used or not packet:
+            return 0.0
+        try:
+            rate = float(os.getenv("LLM_COST_PER_1K_USD", "0"))
+        except ValueError:
+            rate = 0.0
+        if rate <= 0:
+            return 0.0
+        summary = packet.producer_rationale.summary if packet.producer_rationale else ""
+        # Rough token estimate: a fixed prompt budget plus output chars / 4.
+        approx_tokens = 800 + max(1, len(summary) // 4)
+        return round((approx_tokens / 1000) * rate, 6)
 
     def _pause_for_missing_info(self, workflow_state: WorkflowState, questions: List[Dict[str, Any]]) -> WorkflowState:
         workflow_state.status = "waiting_for_info"
