@@ -10,4 +10,5 @@ storage/*.db-wal
 storage/*.db-shm
 storage/chroma_db/
 storage/knowledge_base/
+evals/reports/
 .DS_Store
