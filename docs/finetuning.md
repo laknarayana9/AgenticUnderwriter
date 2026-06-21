@@ -73,6 +73,35 @@ holdout eval is a few hundred short completions. This fits comfortably in the
 $100 Token Factory credit, but **confirm current fine-tuning + inference pricing**
 on the Nebius console before launching — pricing changes over time.
 
+## Showcase: the fine-tune serving the live governed workflow
+
+The most differentiated artifact isn't the eval table — it's the fine-tune
+*deployed in the product*. `scripts/extraction_workflow_demo.py` extracts a
+producer note that **omits roof age**, then runs the result through the real
+underwriting workflow, contrasting base vs fine-tuned:
+
+```bash
+# Offline illustration (deterministic, no model/key):
+python scripts/extraction_workflow_demo.py --demo-contrast
+
+# Real models:
+NEBIUS_API_KEY=... python scripts/extraction_workflow_demo.py \
+    --base-model meta-llama/Llama-3.1-8B-Instruct \
+    --tuned-model 'ft:meta-llama/Llama-3.1-8B-Instruct-...'
+```
+
+The governance consequence of refusal correctness becomes concrete:
+
+| extractor | roof age | workflow outcome |
+|---|---|---|
+| base (hallucinates) | invents `10` | **ACCEPT** — underwrites on a fabricated fact |
+| fine-tuned (abstains) | `null` | **waiting_for_info** — correctly pauses to ask |
+
+This ties the fine-tune metric (`refusal_correctness`) directly to the project's
+thesis: abstention is the difference between deciding on a hallucinated fact and
+stopping to gather it. The contrast is regression-tested end to end against the
+real workflow.
+
 ## Scope notes
 
 - **SFT/LoRA only.** Token Factory's managed API is supervised-fine-tune focused.
