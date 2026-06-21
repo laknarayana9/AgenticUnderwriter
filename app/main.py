@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List, Literal, Union
@@ -9,9 +9,17 @@ from datetime import datetime
 from models.schemas import DecisionType, HumanReviewRecord, QuoteSubmission, RunRecord, WorkflowState, HO3Submission
 from workflows import UnderwritingWorkflow
 from storage.database import db
-from observability import get_metrics_summary
+from observability import add_metric_listener, get_metrics_summary
+from streaming import StreamMonitor
+from streaming.explain import explain_anomaly
+from streaming.latency_budget import decompose_latency
 
 workflow = UnderwritingWorkflow(db=db)
+
+# Real-time run-event monitor (Tier 4). Subscribed to the metrics stream so every
+# completed run feeds it; reads stay in-process with no external dependency.
+stream_monitor = StreamMonitor()
+add_metric_listener(stream_monitor.observe_metric)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -667,6 +675,53 @@ async def get_metrics():
     coverage (grounding of REFER/DECLINE decisions), LLM usage, and cost.
     """
     return get_metrics_summary()
+
+
+@app.get("/monitor/summary")
+async def monitor_summary():
+    """Streaming-monitor rolling-window health summary."""
+    return stream_monitor.summary()
+
+
+@app.get("/monitor/anomalies")
+async def monitor_anomalies():
+    """Current anomalies, each with a human-readable explanation (deterministic
+    unless an LLM provider is configured)."""
+    anomalies = stream_monitor.detect()
+    return {
+        "count": len(anomalies),
+        "anomalies": [
+            {**vars(a), **explain_anomaly(a, llm_service=workflow.llm_service)}
+            for a in anomalies
+        ],
+    }
+
+
+@app.get("/runs/{run_id}/latency-budget")
+async def run_latency_budget(run_id: str):
+    """Per-stage latency-budget decomposition for a run."""
+    run_record = db.get_run_record(run_id)
+    if run_record is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    timings = run_record.workflow_state.stage_timings or {}
+    if not timings:
+        raise HTTPException(status_code=404, detail="No stage timings recorded for this run")
+    return {"run_id": run_id, **decompose_latency(timings)}
+
+
+@app.websocket("/ws/monitor")
+async def ws_monitor(websocket: WebSocket):
+    """Stream live monitor snapshots. Sends a snapshot on connect and on each
+    client message (a poll), so dashboards get real-time health + anomalies."""
+    await websocket.accept()
+    try:
+        await websocket.send_json({"type": "snapshot", **stream_monitor.summary()})
+        while True:
+            # Wait for a client poll (or disconnect); push the latest snapshot.
+            await websocket.receive_text()
+            await websocket.send_json({"type": "snapshot", **stream_monitor.summary()})
+    except WebSocketDisconnect:
+        return
 
 
 @app.get("/health")

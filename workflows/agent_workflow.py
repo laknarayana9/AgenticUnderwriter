@@ -17,6 +17,7 @@ from observability import (
     get_tracer,
     record_request_metric,
     record_workflow_latency,
+    timed_stage,
 )
 from app.llm_service import StructuredLLMService
 from workflows.agents import (
@@ -143,14 +144,14 @@ class UnderwritingWorkflow:
 
             try:
                 # Step 1: Intake Normalization
-                with tracer.start_as_current_span("intake_normalization"):
+                with timed_stage(tracer, "intake_normalization", workflow_state.stage_timings):
                     workflow_state.current_node = "intake_normalization"
                     normalization_result = self.intake_normalizer.normalize(submission_raw)
                     workflow_state.missing_info = normalization_result["missing_info"]
                     workflow_state.required_questions = normalization_result["questions"]
 
                 # Step 2: Planning/Routing
-                with tracer.start_as_current_span("planner_routing"):
+                with timed_stage(tracer, "planner_routing", workflow_state.stage_timings):
                     workflow_state.current_node = "planner"
                     routing_decision = self.planner_router.route(
                         submission_raw,
@@ -192,7 +193,7 @@ class UnderwritingWorkflow:
                     return workflow_state
 
                 # Step 3: Enrichment
-                with tracer.start_as_current_span("enrichment"):
+                with timed_stage(tracer, "enrichment", workflow_state.stage_timings):
                     workflow_state.current_node = "enrichment"
                     enrichment_data = self.enrichment_agent.enrich(
                         workflow_state.submission_canonical
@@ -209,19 +210,19 @@ class UnderwritingWorkflow:
                     return self._pause_for_missing_info(workflow_state, followup_questions)
 
                 # Step 4: Retrieval
-                with tracer.start_as_current_span("retrieval"):
+                with timed_stage(tracer, "retrieval", workflow_state.stage_timings):
                     workflow_state.current_node = "retrieval"
                     retrieval_result = self.retrieval_agent.retrieve(enrichment_data)
                     workflow_state.retrieval = retrieval_result
 
                 # Step 5: Underwriting Assessment
-                with tracer.start_as_current_span("underwriting_assessment"):
+                with timed_stage(tracer, "underwriting_assessment", workflow_state.stage_timings):
                     workflow_state.current_node = "assessment"
                     assessment_result = self.assessor_agent.assess(enrichment_data, retrieval_result)
                     workflow_state.assessment = assessment_result
 
                 # Step 6: Verification
-                with tracer.start_as_current_span("verification"):
+                with timed_stage(tracer, "verification", workflow_state.stage_timings):
                     workflow_state.current_node = "verification"
                     verification_result = self.verifier_agent.verify(assessment_result)
                     workflow_state.verification = verification_result
@@ -235,7 +236,7 @@ class UnderwritingWorkflow:
                         assessment_result["preliminary_decision"] = verification_result["forced_decision"]
 
                 # Step 7: Rating
-                with tracer.start_as_current_span("rating"):
+                with timed_stage(tracer, "rating", workflow_state.stage_timings):
                     workflow_state.current_node = "rating"
                     rating_data = self._prepare_rating_data(
                         workflow_state.submission_canonical,
@@ -249,7 +250,7 @@ class UnderwritingWorkflow:
 
                 # Step 8: Decision Packaging with generator-critic loop
                 # PII is masked inside StructuredLLMService before any LLM call.
-                with tracer.start_as_current_span("decision_packaging"):
+                with timed_stage(tracer, "decision_packaging", workflow_state.stage_timings):
                     workflow_state.current_node = "decision_packaging"
 
                     # Log which PII fields will be masked (no values logged)
