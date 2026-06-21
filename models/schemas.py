@@ -257,6 +257,9 @@ class WorkflowState(BaseModel):
     critic_verdicts: List[Dict[str, Any]] = Field(default_factory=list, description="One entry per critic verification attempt")
     rationale_retry_count: int = Field(0, description="Number of generator retries triggered by critic")
 
+    # Per-stage latency (ms) for the latency-budget decomposition (Tier 4)
+    stage_timings: Dict[str, float] = Field(default_factory=dict, description="Workflow stage -> duration in milliseconds")
+
     # Trace information
     trace: Optional[Dict[str, Any]] = Field(None, description="Trace information including phoenix_trace_id, phoenix_url")
 

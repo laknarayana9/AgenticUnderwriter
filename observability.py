@@ -8,8 +8,9 @@ import threading
 import time
 import uuid
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional, Protocol
+from typing import Any, Deque, Dict, Iterator, List, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,22 @@ def record_workflow_latency(workflow_name: str, duration_ms: float) -> None:
         span.set_attribute("workflow.duration_ms", duration_ms)
 
 
+@contextmanager
+def timed_stage(tracer: "WorkflowTracer", name: str, sink: Dict[str, float]) -> Iterator["WorkflowSpan"]:
+    """Trace a workflow stage and record its wall-clock duration into ``sink``.
+
+    A drop-in for ``tracer.start_as_current_span(name)`` that also populates the
+    per-stage latency budget (Tier 4). Timing is recorded even when the stage
+    raises, so a failure still shows where time went."""
+    start = time.perf_counter()
+    span = tracer.start_as_current_span(name)
+    try:
+        with span:
+            yield span
+    finally:
+        sink[name] = round((time.perf_counter() - start) * 1000, 2)
+
+
 # ---------------------------------------------------------------------------
 # Request-level quality metrics (Tier 2.6)
 #
@@ -238,11 +255,22 @@ class MetricsCollector:
         self._metrics: Deque[RequestMetric] = deque(maxlen=maxlen)
         self._lock = threading.Lock()
         self._langfuse = _LangfuseSink()
+        self._listeners: List[Any] = []
+
+    def add_listener(self, callback: Any) -> None:
+        """Register a callback invoked with each recorded RequestMetric (e.g. the
+        streaming monitor). Listener exceptions are isolated."""
+        self._listeners.append(callback)
 
     def record(self, metric: RequestMetric) -> None:
         with self._lock:
             self._metrics.append(metric)
         self._langfuse.emit(metric)
+        for listener in list(self._listeners):
+            try:
+                listener(metric)
+            except Exception as exc:  # a bad listener must not break the request path
+                logger.debug("metric listener failed (ignored): %s", exc)
 
     def clear(self) -> None:
         with self._lock:
@@ -337,3 +365,8 @@ def get_metrics_summary() -> Dict[str, Any]:
 def clear_request_metrics() -> None:
     """Reset the metrics collector (tests)."""
     _metrics_collector.clear()
+
+
+def add_metric_listener(callback: Any) -> None:
+    """Subscribe a callback to every recorded request metric."""
+    _metrics_collector.add_listener(callback)
