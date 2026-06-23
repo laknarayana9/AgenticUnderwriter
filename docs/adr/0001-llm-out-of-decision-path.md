@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-05-03
+- **Last reviewed:** 2026-06-23 — refreshed the LLM-touchpoint and enforcement sections to reflect the added generator–critic loop, PII masking, and an optional fine-tuned intake-extraction front-end. The decision itself is unchanged: the LLM remains out of the eligibility decision path.
 - **Decision owner:** Engineering
 - **Context:** Agentic Underwriter — Governed AI Underwriting Workflow Platform
 
@@ -25,11 +26,13 @@ The central architectural question of the system is therefore: **what role shoul
 Concretely:
 
 - The `UnderwritingAssessorAgent` evaluates `app/underwriting_rules.py` against a normalized submission and produces the decision (ACCEPT / REFER / DECLINE) and the structured `reason_codes`.
-- The LLM is invoked in exactly two narrow places, both downstream of the decision:
-  1. **Producer rationale** — a natural-language summary of the already-made decision, intended for the producer/agent submitting the application.
-  2. **Missing-info question wording** — given a structured list of missing fields produced by `IntakeNormalizerAgent`, the LLM rewrites the questions into producer-friendly language.
-- Both LLM calls go through `StructuredLLMService` with Pydantic-validated output schemas and deterministic fallback paths. If the model is unavailable or returns invalid output, the workflow falls back to templated copy and the decision is unaffected.
-- The `VerifierGuardrailAgent` performs a final consistency check: it verifies that the rendered rationale references the same rule set and citations the rules engine actually fired. A mismatch fails the run.
+- The LLM is confined to tasks that are downstream of the decision — or upstream of it but deterministically guarded — never the eligibility decision itself:
+  1. **Producer rationale** — a natural-language summary of the already-made decision, for the producer/agent submitting the application.
+  2. **Missing-info question wording** — given a structured list of missing fields from `IntakeNormalizerAgent`, the LLM rewrites the questions into producer-friendly language; it cannot change *which* fields are required.
+  3. **Intake extraction (optional)** — a fine-tuned model can extract structured intake fields from a free-text producer note (see `docs/finetuning.md`). This sits *upstream* of the rules, but it does not decide: any field the model fails to extract, or correctly abstains on (null), is caught by the deterministic missing-info gate, which pauses the run to ask. The fine-tune is trained for that abstention precisely so an unstated fact is never silently invented into the decision.
+  4. **Rationale critic and ops explanations** — a *separate* critic model verifies rationale faithfulness (see below), and an optional model narrates monitoring anomalies. Neither touches eligibility.
+- Every LLM call goes through `StructuredLLMService` (or the critic's own client) with Pydantic-validated output schemas, PII masking applied before the prompt is sent, and deterministic fallback paths. If a model is unavailable or returns invalid output, the workflow falls back to templated/deterministic copy and the decision is unaffected.
+- Two guardrails defend the boundary: the `VerifierGuardrailAgent` requires every REFER/DECLINE to carry guideline citations (forcing a referral otherwise), and a **generator–critic loop** verifies that the LLM rationale is grounded in the retrieved evidence — failing closed to a deterministic rationale when it is not.
 
 The result: every ACCEPT, REFER, and DECLINE in the system is reproducible from `(submission, ruleset_version, guideline_corpus_version)` alone. The model can be swapped, upgraded, or removed without changing a single decision.
 
@@ -73,10 +76,10 @@ Do everything deterministically — including the producer-facing copy.
 
 ### Positive
 
-- **Reproducibility.** The 196-case CI eval gate enforces 100% decision accuracy, 100% reason-code match, and 100% retrieval recall@5 deterministically on every commit. A model regression cannot break this gate, because the model is not in the path.
+- **Reproducibility.** The 196-case CI eval gate enforces 100% decision accuracy, 100% reason-code match, 100% retrieval recall, and 100% citation faithfulness deterministically on every commit. A model regression cannot break this gate, because the model is not in the path.
 - **Auditability.** Every decision has a deterministic chain: submission fields → rules fired → reason codes → retrieved citations → producer rationale. The audit log captures each transition.
 - **Stability under model change.** The system can adopt a new model tier or provider without re-running the decision-quality eval. We re-run only the rationale-quality and missing-info-wording evals.
-- **Cost predictability.** LLM cost is bounded — at most two calls per submission (rationale, missing-info), and zero calls when the deterministic fallback is used.
+- **Cost predictability.** LLM cost is bounded per submission — missing-info wording, the producer rationale, and the critic's verification (with a small bounded retry budget) — and drops to zero when the deterministic fallbacks are used. Optional intake extraction adds one call upstream when enabled.
 - **Failure isolation.** When the LLM is unavailable or producing bad output, the system degrades to templated copy. Decisions continue to be produced and remain valid.
 
 ### Negative
@@ -91,13 +94,15 @@ Do everything deterministically — including the producer-facing copy.
 
 ## How the decision is enforced technically
 
-Five mechanisms hold the line:
+Seven mechanisms hold the line:
 
-1. **Code structure.** `UnderwritingAssessorAgent` does not import or hold a reference to `StructuredLLMService`. The LLM service is constructed only by `IntakeNormalizerAgent` (for missing-info wording) and `DecisionPackagerAgent` (for rationale). Static inspection alone is sufficient to verify the LLM is not in the decision path.
-2. **Schema boundaries.** `MissingInfoQuestionOutput` and `ProducerRationaleOutput` are the only schemas the LLM is permitted to populate. Neither contains a `decision` field. The Pydantic boundary makes a "decision leak" through the LLM mechanically impossible.
-3. **Verifier guardrail.** `VerifierGuardrailAgent` cross-checks rendered rationale against the rules engine's output. A rationale that asserts a decision the rules did not produce fails the run.
-4. **CI eval gate.** The 196-case regression suite is enforced at thresholds of 1.0 for decision accuracy, reason-code match, and retrieval recall@5. The gate runs with `LLM_STRUCTURED_OUTPUT_ENABLED=false` to prove the rules engine and retrieval are sufficient on their own.
-5. **Audit events.** Every state transition emits a structured audit event recording the rule(s) fired, citations retrieved, and the decision produced. The trail is independent of LLM output.
+1. **Code structure.** `UnderwritingAssessorAgent` does not import or hold a reference to `StructuredLLMService`. The LLM service is constructed only by `IntakeNormalizerAgent` (missing-info wording) and `DecisionPackagerAgent` (rationale); the critic constructs its own separate client. Static inspection alone is sufficient to verify the LLM is not in the decision path.
+2. **Schema boundaries.** `MissingInfoQuestionOutput` and `ProducerRationaleOutput` are the only schemas the LLM is permitted to populate, and the fine-tuned extractor emits only the fixed intake-field schema. None contains a `decision` field. The Pydantic boundary makes a "decision leak" through the LLM mechanically impossible.
+3. **Citation guardrail.** `VerifierGuardrailAgent` requires every REFER/DECLINE to carry guideline citations; an adverse decision without evidence is forced to a referral. This is a property of the rules output, not of any LLM text.
+4. **Generator–critic loop.** `workflows/critic.py` runs a separate critic model to verify that the producer rationale is grounded in the retrieved evidence. A deterministic pre-check rejects any citation id not actually retrieved; the LLM faithfulness check runs after. On rejection it retries with feedback, then fails closed to a deterministic rationale. This guards the *explanation*, never the decision.
+5. **PII masking.** A mask map computed from the original submission scrubs every prompt (generator and critic) before it leaves the process, so applicant PII never reaches a provider.
+6. **CI eval gate.** The 196-case regression suite is enforced at thresholds of 1.0 for decision accuracy, reason-code match, retrieval recall, and citation faithfulness. The gate runs with `LLM_STRUCTURED_OUTPUT_ENABLED=false` to prove the rules engine and retrieval are sufficient on their own.
+7. **Audit events.** Every state transition emits a structured audit event recording the rule(s) fired, citations retrieved, critic verdicts, and the decision produced. The trail is independent of LLM output.
 
 ## Failure modes catalog
 
@@ -115,7 +120,10 @@ If we add a line where the rules genuinely cannot be enumerated (e.g., specialty
 
 - `app/underwriting_rules.py` — rule engine and decision logic
 - `app/llm_service.py` — bounded LLM service with Pydantic schemas and fallback
-- `workflows/agent_workflow.py` — 7-stage pipeline orchestration
+- `app/pii_masker.py` — PII masking applied before every LLM prompt
+- `workflows/agent_workflow.py` — multi-stage pipeline orchestration
 - `workflows/agents.py` — stage handlers (deterministic; "Agent" is a role label, not an LLM driver)
+- `workflows/critic.py` — generator–critic loop for rationale faithfulness (separate critic model)
+- `finetune/` and `docs/finetuning.md` — optional fine-tuned intake-extraction front-end (upstream of the rules, guarded by the missing-info gate)
 - `evals/run.py` and `evals/datasets/ho3_labeled.jsonl` — 196-case CI regression suite
-- `.github/workflows/ci.yml` — eval gate enforced at 1.0 thresholds
+- `.github/workflows/ci.yml` — eval gate enforced at 1.0 thresholds (decision, reason-code, recall, faithfulness)
