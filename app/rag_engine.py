@@ -1149,9 +1149,13 @@ def _sigmoid(value: float) -> float:
 
 
 def _load_chromadb():
+    # Catch any import-time failure, not just ImportError: an installed-but-broken
+    # chromadb (e.g. a version incompatible with the active NumPy) raises
+    # AttributeError on import. Treat all such cases as "unavailable" so retrieval
+    # degrades to in-memory scoring rather than crashing.
     try:
         import chromadb
         from chromadb.config import Settings
-    except ImportError as exc:
-        raise RuntimeError("chromadb is not installed") from exc
+    except Exception as exc:  # noqa: BLE001 - intentional: any failure → in-memory fallback
+        raise RuntimeError(f"chromadb is unavailable: {exc}") from exc
     return chromadb, Settings
