@@ -84,34 +84,90 @@ def upload_dataset(
 
 
 # ---------------------------------------------------------------------------
-# Evaluator functions (used by client.evaluate in Task 3)
+# Evaluators — each takes (outputs, reference_outputs) and returns a score dict
 # ---------------------------------------------------------------------------
 
-def eval_decision_accuracy(run: Any, example: Any) -> dict:
-    """Return 1.0 if the predicted decision matches the gold decision."""
-    predicted = (run.outputs or {}).get("decision")
-    expected = (example.outputs or {}).get("decision")
-    score = 1.0 if predicted == expected else 0.0
-    return {"key": "decision_accuracy", "score": score}
+def eval_decision_accuracy(outputs: Dict[str, Any], reference_outputs: Dict[str, Any]) -> Dict[str, Any]:
+    predicted = (outputs.get("decision") or "").upper()
+    expected = (reference_outputs.get("decision") or "").upper()
+    return {"key": "decision_accuracy", "score": 1.0 if predicted == expected else 0.0}
 
 
-def eval_faithfulness(run: Any, example: Any) -> dict:
-    """Return fraction of reason codes supported by retrieved citations."""
-    reason_codes = (run.outputs or {}).get("reason_codes", [])
-    citations = (run.outputs or {}).get("citations", [])
-    if not reason_codes:
+def eval_retrieval_recall(outputs: Dict[str, Any], reference_outputs: Dict[str, Any]) -> Dict[str, Any]:
+    gold = set(reference_outputs.get("gold_citations") or [])
+    if not gold:
+        return {"key": "retrieval_recall@5", "score": 1.0}
+    actual = set((outputs.get("citations") or [])[:5])
+    score = round(len(gold & actual) / len(gold), 4)
+    return {"key": "retrieval_recall@5", "score": score}
+
+
+def eval_faithfulness(outputs: Dict[str, Any], reference_outputs: Dict[str, Any]) -> Dict[str, Any]:
+    citations = outputs.get("citations") or []
+    if not citations:
         return {"key": "faithfulness", "score": 1.0}
-    supported = sum(1 for rc in reason_codes if rc in citations)
-    score = supported / len(reason_codes)
+    retrieved_ids = {
+        chunk.get("chunk_id")
+        for chunk in (outputs.get("retrieved_chunks") or [])
+        if isinstance(chunk, dict) and chunk.get("chunk_id")
+    }
+    grounded = sum(1 for cid in citations if cid in retrieved_ids)
+    score = round(grounded / len(citations), 4)
     return {"key": "faithfulness", "score": score}
 
 
-def eval_retrieval_recall(run: Any, example: Any) -> dict:
-    """Return fraction of gold citations that appear in retrieved chunks."""
-    gold_citations = (example.outputs or {}).get("gold_citations", [])
-    retrieved = (run.outputs or {}).get("retrieved_chunks", [])
-    if not gold_citations:
-        return {"key": "retrieval_recall", "score": 1.0}
-    found = sum(1 for gc in gold_citations if gc in retrieved)
-    score = found / len(gold_citations)
-    return {"key": "retrieval_recall", "score": score}
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _require_api_key() -> str:
+    key = os.getenv("LANGSMITH_API_KEY", "").strip()
+    if not key:
+        print("error: LANGSMITH_API_KEY is not set. Export it before running.", file=sys.stderr)
+        sys.exit(1)
+    return key
+
+
+def cmd_upload_dataset(args: argparse.Namespace) -> None:
+    _require_api_key()
+    client = Client()
+    url = upload_dataset(DATASET_PATH, DATASET_NAME, client)
+    print(f"Dataset URL: {url}")
+
+
+def cmd_run_eval(args: argparse.Namespace) -> None:
+    _require_api_key()
+    client = Client()
+    results = client.evaluate(
+        run_workflow,
+        data=DATASET_NAME,
+        evaluators=[eval_decision_accuracy, eval_retrieval_recall, eval_faithfulness],
+        experiment_prefix=args.experiment_prefix,
+        max_concurrency=1,
+    )
+    print(f"Experiment URL: {results.experiment_name}")
+    print("Done.")
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    parser = argparse.ArgumentParser(description="LangSmith dataset upload and evaluation for HO3 underwriting.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("upload-dataset", help="Upload ho3_labeled.jsonl as a LangSmith dataset.")
+
+    run_parser = sub.add_parser("run-eval", help="Run client.evaluate against the golden dataset.")
+    run_parser.add_argument(
+        "--experiment-prefix",
+        default="run",
+        help="Prefix for the LangSmith experiment name (e.g. 'baseline', 'improved').",
+    )
+
+    args = parser.parse_args(argv)
+    if args.command == "upload-dataset":
+        cmd_upload_dataset(args)
+    elif args.command == "run-eval":
+        cmd_run_eval(args)
+
+
+if __name__ == "__main__":
+    main()
