@@ -1,2 +1,4 @@
 # Optional interactive portfolio demo
 streamlit>=1.37.0
+# LangSmith tracing and evaluation (optional, commercial)
+langsmith>=0.1.0
