@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -78,7 +77,13 @@ def upload_dataset(
         }
         for case in cases
     ]
-    client.create_examples(inputs=inputs, outputs=outputs, dataset_id=ds.id)
+    client.create_examples(
+        dataset_id=ds.id,
+        examples=[
+            {"inputs": inp, "outputs": out}
+            for inp, out in zip(inputs, outputs)
+        ],
+    )
     print(f"Uploaded {len(cases)} examples to '{dataset_name}'.")
     return ds.url
 
@@ -145,7 +150,8 @@ def cmd_run_eval(args: argparse.Namespace) -> None:
         experiment_prefix=args.experiment_prefix,
         max_concurrency=1,
     )
-    print(f"Experiment URL: {results.experiment_name}")
+    print(f"Experiment: {results.experiment_name}")
+    print("Open https://smith.langchain.com to view results.")
     print("Done.")
 
 
