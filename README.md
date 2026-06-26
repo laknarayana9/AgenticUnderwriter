@@ -5,7 +5,7 @@ cited `ACCEPT` / `REFER` / `DECLINE` decision, with human-in-the-loop review.
 
 **Portfolio proof points:** CI-gated evals across 206 stratified cases with 100%
 decision accuracy, 100% reason-code match, 100% retrieval recall@5, 100% citation
-faithfulness, and 91 passing product tests.
+faithfulness, and 99 passing product tests.
 
 This repo demonstrates a compact quote-to-underwrite workflow for homeowners
 submissions, including HO3 homeowners policies. It is built to show the product
@@ -207,12 +207,45 @@ Current CI-gated metrics:
 | Reason-code match | 100% |
 | Retrieval recall@5 | 100% |
 | Faithfulness | 100% |
-| Product tests | 42 passing |
+| Product tests | 99 passing |
 
 Faithfulness is a deterministic groundedness check: it verifies the decision
 packet only cites chunks that were actually retrieved this run and only asserts
 supporting facts the rules actually produced. It catches fabricated citations or
 facts when the optional LLM wording path is enabled.
+
+### LLM-as-judge calibrated against human labels
+
+The deterministic metrics above are reproducible by construction — strong for
+governance, but they do not test the one part of the system that is genuinely
+stochastic: the LLM critic that judges whether a producer rationale is faithful
+to its evidence (`workflows/critic.py`). That judge can be wrong, and it fails
+open. So we calibrate it against a hand-labeled set rather than trusting it
+blindly.
+
+[evals/judge_calibration.py](evals/judge_calibration.py) runs the judge over ~24
+human-labeled rationales (balanced, with injected hallucinations and fabricated
+citations) and reports judge↔human agreement, Cohen's kappa, and — the headline
+— the **false-negative rate**, i.e. the unfaithful rationales the judge passed.
+
+```bash
+python -m evals.judge_calibration --record   # writes evals/reports/judge_calibration.md
+```
+
+| Metric | Value |
+| --- | ---: |
+| Labeled rationales | 24 |
+| Agreement | 83.3% |
+| Cohen's kappa | 0.667 |
+| Recall (catch rate) | 83.3% |
+| False-negative rate (fail-open) | 16.7% |
+
+The numbers above were produced by a deterministic *simulated* stand-in judge
+(this repo ships without API keys); the same harness recalibrates the real LLM
+critic with `--backend llm`. How the simulated numbers were generated — and how
+to regenerate against a hosted model — is documented in full in
+[docs/judge_calibration_provenance.md](docs/judge_calibration_provenance.md).
+See [docs/judge_calibration.md](docs/judge_calibration.md) for methodology.
 
 Coverage breakdown:
 

@@ -1,0 +1,169 @@
+{
+  "generated_at": "2026-06-26T01:55:45Z",
+  "judge": {
+    "backend": "simulated",
+    "overlap_threshold": 0.34
+  },
+  "verdicts": {
+    "JCAL-001": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-002": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-003": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-004": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-005": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-006": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-007": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "summary concludes accept while evidence carries a refer/decline directive",
+      "unsupported_facts": []
+    },
+    "JCAL-008": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-009": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "summary concludes accept while evidence carries a refer/decline directive",
+      "unsupported_facts": []
+    },
+    "JCAL-010": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-011": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-012": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-013": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "supporting fact(s) lack lexical grounding in evidence",
+      "unsupported_facts": [
+        "wildfire_score: High requires referral",
+        "30% wildfire surcharge applied"
+      ]
+    },
+    "JCAL-014": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "supporting fact(s) lack lexical grounding in evidence",
+      "unsupported_facts": [
+        "roof_age_years: 6 within standards",
+        "10% loyalty discount for prior tenure"
+      ]
+    },
+    "JCAL-015": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "supporting fact(s) lack lexical grounding in evidence",
+      "unsupported_facts": [
+        "sump pump required within 30 days"
+      ]
+    },
+    "JCAL-016": {
+      "invalid_citation_ids": [
+        "uw_guidelines_homeowners_9__roof_premium_credits_99"
+      ],
+      "passed": false,
+      "reason": "citation id(s) not in evidence: ['uw_guidelines_homeowners_9__roof_premium_credits_99']",
+      "unsupported_facts": []
+    },
+    "JCAL-017": {
+      "invalid_citation_ids": [
+        "uw_guidelines_homeowners_8__electrical_decline_matrix_42"
+      ],
+      "passed": false,
+      "reason": "citation id(s) not in evidence: ['uw_guidelines_homeowners_8__electrical_decline_matrix_42']",
+      "unsupported_facts": []
+    },
+    "JCAL-018": {
+      "invalid_citation_ids": [
+        "claims_history_guidance_7__frequency_surcharge_table_88"
+      ],
+      "passed": false,
+      "reason": "citation id(s) not in evidence: ['claims_history_guidance_7__frequency_surcharge_table_88']",
+      "unsupported_facts": []
+    },
+    "JCAL-019": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-020": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "supporting fact(s) lack lexical grounding in evidence",
+      "unsupported_facts": [
+        "roof_age_years: 14 exceeds the referral threshold"
+      ]
+    },
+    "JCAL-021": {
+      "invalid_citation_ids": [],
+      "passed": true,
+      "reason": "grounded",
+      "unsupported_facts": []
+    },
+    "JCAL-022": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "summary concludes accept while evidence carries a refer/decline directive",
+      "unsupported_facts": []
+    },
+    "JCAL-023": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "summary concludes accept while evidence carries a refer/decline directive",
+      "unsupported_facts": []
+    },
+    "JCAL-024": {
+      "invalid_citation_ids": [],
+      "passed": false,
+      "reason": "summary concludes accept while evidence carries a refer/decline directive",
+      "unsupported_facts": []
+    }
+  }
+}
