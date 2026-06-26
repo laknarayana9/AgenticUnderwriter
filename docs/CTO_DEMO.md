@@ -20,7 +20,7 @@ pytest tests/ -q
 
 **Expected output:**
 ```
-42 passed in Xs
+91 passed in Xs
 ```
 
 ---
@@ -265,7 +265,7 @@ Open `http://localhost:8501` in a browser.
 
 | # | Feature | Proof point |
 |---|---------|-------------|
-| 1 | Test suite | 42 passing product tests, CI-ready |
+| 1 | Test suite | 91 passing product tests, CI-ready |
 | 2 | Core workflow | 7-agent pipeline → cited ACCEPT/REFER/DECLINE |
 | 3 | Missing-info loop | Pause → resume on same run ID with audit |
 | 4 | HITL review queue | High-risk cases routed to human review |
