@@ -179,7 +179,9 @@ curl -s http://localhost:8000/runs/<RUN_ID>/latency-budget | python3 -m json.too
 
 ```bash
 # Compare retrieval strategies on the same query
-python3 scripts/compare_retrieval.py
+python3 scripts/compare_retrieval.py \
+  --query "roof age eligibility requirements for homeowners policy" \
+  --limit 5 --no-embeddings
 ```
 
 **Look for:** side-by-side table of lexical vs BM25 vs RRF hybrid vs cross-encoder recall scores.
