@@ -40,19 +40,21 @@ In a second terminal:
 curl -s -X POST http://localhost:8000/quote/ho3 \
   -H "Content-Type: application/json" \
   -d '{
-    "applicant": {"full_name": "Alex Kim", "email": "alex@example.com", "phone": "+1-555-100-0001"},
-    "risk": {
-      "property_address": "100 Pine St, Palo Alto, CA 94301",
-      "occupancy": "owner_occupied_primary",
-      "dwelling_type": "single_family",
-      "year_built": 2005,
-      "roof_age_years": 3,
-      "construction_type": "frame",
-      "stories": 1
-    },
-    "coverage_request": {
-      "coverage_a": 500000, "coverage_b_pct": 10, "coverage_c_pct": 50,
-      "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
+    "submission": {
+      "applicant": {"full_name": "Alex Kim", "email": "alex@example.com", "phone": "+1-555-100-0001"},
+      "risk": {
+        "property_address": "100 Pine St, Palo Alto, CA 94301",
+        "occupancy": "owner_occupied_primary",
+        "dwelling_type": "single_family",
+        "year_built": 2005,
+        "roof_age_years": 3,
+        "construction_type": "frame",
+        "stories": 1
+      },
+      "coverage_request": {
+        "coverage_a": 500000, "coverage_b_pct": 10, "coverage_c_pct": 50,
+        "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
+      }
     }
   }' | python3 -m json.tool
 ```
@@ -74,19 +76,20 @@ curl -s -X POST http://localhost:8000/quote/ho3 \
 RUN=$(curl -s -X POST http://localhost:8000/quote/ho3 \
   -H "Content-Type: application/json" \
   -d '{
-    "applicant": {"full_name": "Sam Lee", "email": "sam@example.com", "phone": "+1-555-200-0001"},
-    "risk": {
-      "property_address": "200 Elm St, San Jose, CA 95101",
-      "occupancy": "owner_occupied_primary",
-      "dwelling_type": "single_family",
-      "year_built": 1998,
-      "construction_type": "frame",
-      "stories": 2
-    },
-    "coverage_request": {
-      "coverage_a": 450000, "coverage_b_pct": 10, "coverage_c_pct": 50,
-      "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
-    }
+    "submission": {
+      "applicant": {"full_name": "Sam Lee", "email": "sam@example.com", "phone": "+1-555-200-0001"},
+      "risk": {
+        "property_address": "200 Elm St, San Jose, CA 95101",
+        "occupancy": "owner_occupied_primary",
+        "dwelling_type": "single_family",
+        "year_built": 1998,
+        "construction_type": "frame",
+        "stories": 2
+      },
+      "coverage_request": {
+        "coverage_a": 450000, "coverage_b_pct": 10, "coverage_c_pct": 50,
+        "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
+      }
   }' | python3 -c "import sys,json; print(json.load(sys.stdin)['run_id'])")
 echo "Run ID: $RUN"
 
