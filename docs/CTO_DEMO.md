@@ -71,9 +71,10 @@ curl -s -X POST http://localhost:8000/quote/ho3 \
 
 *Shows: workflow pauses for missing data, resumes on the same run ID with audit trail intact.*
 
+**Step 1 — submit with missing roof age (copy the `run_id` from the response):**
+
 ```bash
-# Trigger a missing-info pause (roof_age_years omitted)
-RUN=$(curl -s -X POST http://localhost:8000/quote/ho3 \
+curl -s -X POST http://localhost:8000/quote/ho3 \
   -H "Content-Type: application/json" \
   -d '{
     "submission": {
@@ -90,21 +91,27 @@ RUN=$(curl -s -X POST http://localhost:8000/quote/ho3 \
         "coverage_a": 450000, "coverage_b_pct": 10, "coverage_c_pct": 50,
         "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
       }
-  }' | python3 -c "import sys,json; print(json.load(sys.stdin)['run_id'])")
-echo "Run ID: $RUN"
+    }
+  }' | python3 -m json.tool
+```
 
-# Check status — should show waiting_for_info
-curl -s http://localhost:8000/runs/$RUN | python3 -m json.tool | grep -E '"status"|"follow_up"'
+**Step 2 — check status (paste your `run_id` in place of `<RUN_ID>`):**
 
-# Resume with the missing answer
-curl -s -X POST http://localhost:8000/runs/$RUN/answers \
+```bash
+curl -s http://localhost:8000/runs/<RUN_ID> | python3 -m json.tool
+```
+
+**Step 3 — resume with the missing answer:**
+
+```bash
+curl -s -X POST http://localhost:8000/runs/<RUN_ID>/answers \
   -H "Content-Type: application/json" \
   -d '{"answers": {"roof_age_years": 5}}' | python3 -m json.tool
 ```
 
 **Look for:**
-- First response: `"status": "waiting_for_info"` and `"follow_up_questions"` in the packet
-- Second response: completed decision with `"status": "completed"`
+- Step 1 response: `"status": "waiting_for_info"` and `"follow_up_questions"` in the packet
+- Step 3 response: completed decision with `"status": "completed"`
 
 ---
 
