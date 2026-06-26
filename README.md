@@ -219,9 +219,10 @@ facts when the optional LLM wording path is enabled.
 The deterministic metrics above are reproducible by construction — strong for
 governance, but they do not test the one part of the system that is genuinely
 stochastic: the LLM critic that judges whether a producer rationale is faithful
-to its evidence (`workflows/critic.py`). That judge can be wrong, and it fails
-open. So we calibrate it against a hand-labeled set rather than trusting it
-blindly.
+to its evidence (`workflows/critic.py`). That judge — **Claude
+`claude-sonnet-4-6` by default, chosen independently of the generator to avoid
+self-grading bias** — can be wrong, and it fails open. So we calibrate it
+against a hand-labeled set rather than trusting it blindly.
 
 [evals/judge_calibration.py](evals/judge_calibration.py) runs the judge over ~24
 human-labeled rationales (balanced, with injected hallucinations and fabricated

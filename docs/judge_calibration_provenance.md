@@ -82,8 +82,8 @@ band/threshold aware).
 ## How to regenerate against the real LLM judge
 
 ```bash
-LLM_STRUCTURED_OUTPUT_ENABLED=true \
-LLM_PROVIDER=openai CRITIC_LLM_MODEL=gpt-4o-mini OPENAI_API_KEY=sk-... \
+# The judge defaults to Claude (claude-sonnet-4-6), independent of the generator.
+LLM_STRUCTURED_OUTPUT_ENABLED=true ANTHROPIC_API_KEY=sk-ant-... \
     python -m evals.judge_calibration --backend llm --record
 ```
 

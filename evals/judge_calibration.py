@@ -281,8 +281,10 @@ class LLMJudge:
         self._user_template = _CRITIC_USER_TEMPLATE
         self._schema = _CriticResponseModel.schema
 
-        provider = os.getenv("CRITIC_LLM_PROVIDER", os.getenv("LLM_PROVIDER", "openai")).strip().lower()
-        model = os.getenv("CRITIC_LLM_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")).strip()
+        # Same default as the production critic: Claude, independent of the
+        # generator, so the calibration characterizes the judge that ships.
+        provider = os.getenv("CRITIC_LLM_PROVIDER", "claude").strip().lower()
+        model = os.getenv("CRITIC_LLM_MODEL", "claude-sonnet-4-6").strip()
         config = LLMServiceConfig(
             enabled=os.getenv("LLM_STRUCTURED_OUTPUT_ENABLED", "false").lower() in {"1", "true", "yes"},
             provider=provider,

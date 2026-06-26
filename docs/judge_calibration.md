@@ -53,9 +53,15 @@ python -m evals.judge_calibration --record
 # Recompute the report offline from the committed snapshot (no judge calls)
 python -m evals.judge_calibration --backend snapshot
 
-# Calibrate the REAL shipped LLM judge (needs an API key) and record it
-LLM_STRUCTURED_OUTPUT_ENABLED=true LLM_PROVIDER=openai OPENAI_API_KEY=... \
+# Calibrate the REAL shipped LLM judge (needs an API key) and record it.
+# The judge defaults to Claude (claude-sonnet-4-6), independent of the
+# generator, so it does not grade output from the same model.
+LLM_STRUCTURED_OUTPUT_ENABLED=true ANTHROPIC_API_KEY=... \
     python -m evals.judge_calibration --backend llm --record
+
+# Use a different judge model (e.g. maximum rigor with Opus, or a budget run):
+CRITIC_LLM_MODEL=claude-opus-4-8 LLM_STRUCTURED_OUTPUT_ENABLED=true \
+    ANTHROPIC_API_KEY=... python -m evals.judge_calibration --backend llm --record
 
 # Opt-in soft thresholds (return non-zero on breach; not in the blocking CI gate)
 python -m evals.judge_calibration --min-agreement 0.8 --min-kappa 0.6
@@ -68,9 +74,11 @@ The report is written to
 
 - **`llm`** — the real shipped judge. Reuses the *exact* critic system prompt,
   user template, and JSON schema imported from `workflows/critic.py`, plus the
-  same deterministic citation pre-check. This guarantees the calibration
-  characterizes the gatekeeper that actually runs, not a parallel prompt.
-  Requires an API key.
+  same deterministic citation pre-check, and the same default model. This
+  guarantees the calibration characterizes the gatekeeper that actually runs,
+  not a parallel prompt. Defaults to **Claude `claude-sonnet-4-6`**
+  (`CRITIC_LLM_PROVIDER` / `CRITIC_LLM_MODEL` to override), chosen independently
+  of the generator's provider to avoid self-grading bias. Requires an API key.
 - **`simulated`** — a deterministic stand-in used when no key is available (CI,
   and the environment this was first generated in). See
   [judge_calibration_provenance.md](judge_calibration_provenance.md) for exactly
