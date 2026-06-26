@@ -1,52 +1,56 @@
 {
   "missing_roof_age": {
-    "applicant": {
-      "full_name": "Robert Johnson",
-      "email": "robert.j@example.com",
-      "phone": "+1-213-555-0789"
-    },
-    "risk": {
-      "property_address": "789 Pine St, Los Angeles, CA 90001",
-      "occupancy": "owner_occupied_primary",
-      "dwelling_type": "single_family",
-      "year_built": 1995,
-      "roof_age_years": null,
-      "construction_type": "frame",
-      "stories": 1
-    },
-    "coverage_request": {
-      "coverage_a": 350000,
-      "coverage_b_pct": 10,
-      "coverage_c_pct": 50,
-      "coverage_d_pct": 20,
-      "coverage_e": 300000,
-      "coverage_f": 5000,
-      "deductible": 1000
+    "submission": {
+      "applicant": {
+        "full_name": "Robert Johnson",
+        "email": "robert.j@example.com",
+        "phone": "+1-213-555-0789"
+      },
+      "risk": {
+        "property_address": "789 Pine St, Los Angeles, CA 90001",
+        "occupancy": "owner_occupied_primary",
+        "dwelling_type": "single_family",
+        "year_built": 1995,
+        "roof_age_years": null,
+        "construction_type": "frame",
+        "stories": 1
+      },
+      "coverage_request": {
+        "coverage_a": 350000,
+        "coverage_b_pct": 10,
+        "coverage_c_pct": 50,
+        "coverage_d_pct": 20,
+        "coverage_e": 300000,
+        "coverage_f": 5000,
+        "deductible": 1000
+      }
     }
   },
   "wildfire_high": {
-    "applicant": {
-      "full_name": "Jane Doe",
-      "email": "jane.doe@example.com",
-      "phone": "+1-916-555-0456"
-    },
-    "risk": {
-      "property_address": "456 Oak Ave, Sacramento, CA 95814",
-      "occupancy": "owner_occupied_primary",
-      "dwelling_type": "single_family",
-      "year_built": 1985,
-      "roof_age_years": 20,
-      "construction_type": "frame",
-      "stories": 1
-    },
-    "coverage_request": {
-      "coverage_a": 400000,
-      "coverage_b_pct": 10,
-      "coverage_c_pct": 50,
-      "coverage_d_pct": 20,
-      "coverage_e": 300000,
-      "coverage_f": 5000,
-      "deductible": 1500
+    "submission": {
+      "applicant": {
+        "full_name": "Jane Doe",
+        "email": "jane.doe@example.com",
+        "phone": "+1-916-555-0456"
+      },
+      "risk": {
+        "property_address": "456 Oak Ave, Sacramento, CA 95814",
+        "occupancy": "owner_occupied_primary",
+        "dwelling_type": "single_family",
+        "year_built": 1985,
+        "roof_age_years": 20,
+        "construction_type": "frame",
+        "stories": 1
+      },
+      "coverage_request": {
+        "coverage_a": 400000,
+        "coverage_b_pct": 10,
+        "coverage_c_pct": 50,
+        "coverage_d_pct": 20,
+        "coverage_e": 300000,
+        "coverage_f": 5000,
+        "deductible": 1500
+      }
     }
   }
 }

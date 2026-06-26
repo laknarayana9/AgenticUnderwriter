@@ -119,21 +119,18 @@ curl -s -X POST http://localhost:8000/runs/<RUN_ID>/answers \
 
 *Shows: every action is logged; referrals route to a human review queue.*
 
-```bash
-# High-risk submission → triggers REFER + HITL queue
-curl -s -X POST http://localhost:8000/quote/ho3 \
-  -H "Content-Type: application/json" \
-  -d @examples/demo_submissions.json | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-# wildfire_high case
-" 
+**Step 1 — write the wildfire payload to a temp file, then POST it:**
 
-# Shortcut — use the wildfire_high example directly
+```bash
+python3 -c "
+import json
+d = json.load(open('examples/demo_submissions.json'))
+print(json.dumps(d['wildfire_high'], indent=2))
+" > /tmp/wildfire.json
+
 curl -s -X POST http://localhost:8000/quote/ho3 \
   -H "Content-Type: application/json" \
-  -d "$(python3 -c "import json; d=json.load(open('examples/demo_submissions.json')); print(json.dumps(d['wildfire_high']))")" \
-  | python3 -m json.tool
+  -d @/tmp/wildfire.json | python3 -m json.tool
 ```
 
 ```bash
