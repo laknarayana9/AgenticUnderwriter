@@ -108,6 +108,37 @@ def test_langgraph_endpoints_run_and_resume():
     assert r2["status"] == "completed"
 
 
+def test_dual_engine_dataset_parity(native, tmp_path):
+    """The anti-drift guarantee: every labeled eval case yields the SAME outcome
+    on both engines — same decision when it completes, and both pause on the same
+    missing-info cases. This is the dataset-level parity behind the dual-engine
+    claim (decisions come from the shared deterministic rules, so they can't
+    diverge)."""
+    from pathlib import Path
+    from evals.run import load_dataset
+
+    cases = load_dataset(Path("evals/datasets/ho3_labeled.jsonl"))
+    assert cases, "eval dataset is empty"
+    lg = LangGraphUnderwritingWorkflow(native=native, checkpoint_db=str(tmp_path / "parity.sqlite"))
+
+    mismatches = []
+    for case in cases:
+        cid = getattr(case, "id", "?")
+        native_state = native.run(case.submission)
+        lg_result = lg.run(case.submission)
+
+        if native_state.status == "waiting_for_info":
+            if not lg_result["interrupted"]:
+                mismatches.append((cid, "native paused; langgraph did not"))
+        else:
+            native_decision = native_state.decision_packet.decision.value if native_state.decision_packet else None
+            if lg_result["interrupted"] or lg_result["decision"] != native_decision:
+                mismatches.append((cid, f"native={native_decision} langgraph={lg_result.get('decision')} "
+                                        f"interrupted={lg_result['interrupted']}"))
+
+    assert not mismatches, f"{len(mismatches)}/{len(cases)} parity mismatches (first 5): {mismatches[:5]}"
+
+
 def test_durable_resume_across_new_instance(native, tmp_path):
     """A run paused in one engine instance resumes from a fresh instance on the
     same checkpoint DB — proving durable, cross-process HITL."""

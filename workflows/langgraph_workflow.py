@@ -9,8 +9,9 @@ through `StructuredLLMService` + the generator–critic loop (no raw-LLM bypass)
 What this adds over the native engine: idiomatic LangGraph orchestration and
 **durable human-in-the-loop pause/resume via `interrupt()` + a SQLite
 checkpointer** — a paused run survives a process restart and resumes from its
-checkpoint. The native engine remains the governed default; this is selected with
-`WORKFLOW_ENGINE=langgraph`.
+checkpoint. The native engine remains the governed default; this engine is reached
+via the `POST /quote/ho3/langgraph` (and `/{thread_id}/resume`) endpoints, or by
+constructing `LangGraphUnderwritingWorkflow` directly.
 
 Design notes (LangGraph 1.x best practices):
 - Lean `TypedDict` state with `add` reducers for accumulators (events, verdicts);
