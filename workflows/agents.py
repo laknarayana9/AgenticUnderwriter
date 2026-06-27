@@ -119,7 +119,20 @@ class EnrichmentAgent(BaseAgent):
     """Enrichment agent"""
     
     def enrich(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Enrich data with external information"""
+        """Derive a hazard/territory profile for the submission.
+
+        SYNTHETIC STUB — DEMO ONLY. The hazard signal below is keyed off coarse
+        address substring matching (e.g. "fire zone", "river"), which is a stand-in
+        for real geospatial risk lookup, NOT a risk model. It exists so the
+        deterministic rules have a hazard input without a network dependency, and
+        the `confidence_map` it returns flags the hazard profile as low-confidence.
+
+        Production replacement (same interface, swap the implementation): geocode
+        the address, then query FEMA NFHL for flood (SFHA), Cal Fire FHSZ for
+        wildfire band, and a commercial provider (e.g. CoreLogic) for catastrophe
+        scores. The rest of the workflow is unchanged because it depends only on
+        this method's output shape, not how the hazards were derived.
+        """
         logger.info("Enriching data")
         submission = _coerce_submission(data)
         address = submission.risk.property_address.lower()

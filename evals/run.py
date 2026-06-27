@@ -149,7 +149,7 @@ def _evaluate_case(
         status_match = case.expected.status is None or state.status == case.expected.status
         decision_match = actual_decision == case.expected.decision
         reason_code_match = _as_set(actual_reason_codes) == _as_set(case.expected.reason_codes)
-        retrieval_recall = _recall_at_k(case.expected.gold_citations, actual_citations)
+        retrieval_recall = _recall_at_k(case.expected.gold_citations, actual_citations, k)
         faithfulness = _score_faithfulness(packet, state)
 
         # Trust metrics
@@ -261,11 +261,17 @@ def _build_report(results: Sequence[EvalCaseResult]) -> EvalReport:
     )
 
 
-def _recall_at_k(gold_citations: Sequence[str], actual_citations: Sequence[str]) -> Optional[float]:
+def _recall_at_k(gold_citations: Sequence[str], actual_citations: Sequence[str], k: int) -> Optional[float]:
+    """Standard IR recall@k: only the top-k retrieved citations count.
+
+    The k slice is enforced here (it previously was not, so the metric was really
+    recall@N regardless of --k). In practice the assessor already caps citations
+    upstream, but the slice keeps the metric honest if that cap ever changes.
+    """
     if not gold_citations:
         return None
     gold = set(gold_citations)
-    actual = set(actual_citations)
+    actual = set(list(actual_citations)[:k])
     return len(gold & actual) / len(gold)
 
 

@@ -10,6 +10,13 @@ class RatingTool:
     """Calculate a simple, explainable premium indication."""
 
     def calculate_premium(self, coverage_amount: float, risk_factors: Dict[str, Any]) -> Dict[str, Any]:
+        # ILLUSTRATIVE rating factors — DEMO ONLY, no actuarial basis. The 0.2%
+        # base rate and the territory/age/hazard multipliers below are plausible
+        # round numbers chosen so the premium indication is sane, not filed rates.
+        # Production replacement: ISO loss-cost multipliers, state-filed base
+        # rates, and reinsurance-adjusted catastrophe loads — behind this same
+        # method signature. The premium is an indication only; it does not affect
+        # the eligibility decision.
         base_premium = coverage_amount * 0.002
         hazard_scores = risk_factors.get("hazard_scores", {})
 

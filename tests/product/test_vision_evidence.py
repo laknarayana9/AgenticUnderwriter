@@ -80,6 +80,27 @@ def test_provider_error_degrades_to_abstained():
     assert ev.defensible_space_present.visible is False
 
 
+def test_slow_provider_times_out_to_abstained():
+    """A provider slower than the timeout degrades to abstained, fast."""
+    import time
+
+    class _SlowProvider:
+        model = "slow"
+        def extract(self, image_bytes, system_prompt):
+            time.sleep(1.0)
+            return {"defensible_space_present": {"value": True, "confidence": 0.9, "visible": True}}
+
+    svc = VisionEvidenceService(
+        config=VisionServiceConfig(timeout_s=0.2),
+        provider=_SlowProvider(),
+    )
+    start = time.monotonic()
+    ev = svc.extract_evidence(b"img")
+    elapsed = time.monotonic() - start
+    assert ev.source == "stub"               # degraded
+    assert elapsed < 0.9                       # returned without waiting for the slow call
+
+
 def test_confident_defensible_space_folds_into_wildfire_field():
     payload = {"defensible_space_present": {"value": True, "confidence": 0.92, "visible": True}}
     ev = VisionEvidenceService(provider=_FakeProvider(payload)).extract_evidence(b"img")
