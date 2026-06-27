@@ -12,7 +12,7 @@ cp .env.example .env                   # fill in OPENAI_API_KEY (and optionally 
 
 ## 1. Unit + Product Test Suite (CI gate)
 
-*Shows: 126 passing product tests, fully deterministic, no LLM calls needed.*
+*Shows: 124 passing product tests + 2 skipped (model-download tests gated behind `RUN_MODEL_TESTS=1`), fully deterministic, no LLM calls or network needed.*
 
 ```bash
 pytest tests/ -q
@@ -20,7 +20,7 @@ pytest tests/ -q
 
 **Expected output:**
 ```
-126 passed in Xs
+124 passed, 2 skipped in Xs
 ```
 
 ---
@@ -431,7 +431,7 @@ Open `http://localhost:8501` in a browser.
 
 | # | Feature | Proof point |
 |---|---------|-------------|
-| 1 | Test suite | 126 passing product tests, CI-ready |
+| 1 | Test suite | 124 passing + 2 skipped (model-download tests), CI-ready |
 | 2 | Core workflow | 7-agent pipeline → cited ACCEPT/REFER/DECLINE |
 | 3 | Missing-info loop | Pause → resume on same run ID with audit |
 | 4 | HITL review queue | High-risk cases routed to human review |
