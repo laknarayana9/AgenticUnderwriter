@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Protocol, Tuple
@@ -73,6 +74,9 @@ class VisionServiceConfig:
     # Only attributes at/above this confidence are folded into the submission;
     # below it, the workflow's missing-info gate asks a human instead.
     min_confidence: float = 0.6
+    # Hard wall-clock budget for a single extraction; a slow/hung provider
+    # degrades to abstained evidence instead of blocking the request.
+    timeout_s: float = 8.0
 
     @classmethod
     def from_env(cls) -> "VisionServiceConfig":
@@ -81,6 +85,10 @@ class VisionServiceConfig:
             min_conf = float(os.getenv("VISION_MIN_CONFIDENCE", "0.6"))
         except ValueError:
             min_conf = 0.6
+        try:
+            timeout_s = float(os.getenv("VISION_TIMEOUT_S", "8.0"))
+        except ValueError:
+            timeout_s = 8.0
         if provider == "ollama":
             api_key = ""  # not used by Ollama
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
@@ -96,6 +104,7 @@ class VisionServiceConfig:
             api_key=api_key,
             base_url=base_url,
             min_confidence=max(0.0, min(1.0, min_conf)),
+            timeout_s=max(0.5, timeout_s),
         )
 
 
@@ -139,12 +148,23 @@ class VisionEvidenceService:
         sha = hashlib.sha256(image_bytes or b"").hexdigest()
         if not self.provider:
             return self._abstained(sha, model="stub", source="stub")
+        # Hard timeout: a slow/hung vision provider must not block the request. On
+        # timeout (or any error) we degrade to abstained evidence, which the
+        # workflow treats exactly like "no photo" — the missing-info gate asks.
+        # shutdown(wait=False) so we return immediately and don't block on a worker
+        # still inside a blocking provider call (a client-level HTTP timeout in the
+        # provider is the complementary fix).
+        pool = ThreadPoolExecutor(max_workers=1)
         try:
-            raw = self.provider.extract(image_bytes, VISION_SYSTEM_PROMPT)
+            raw = pool.submit(self.provider.extract, image_bytes, VISION_SYSTEM_PROMPT).result(
+                timeout=self.config.timeout_s
+            )
             return self._parse(raw, sha, model=getattr(self.provider, "model", self.config.model))
-        except Exception as exc:  # noqa: BLE001 - any provider failure must degrade, not crash the workflow
-            logger.info("Vision extraction failed; returning abstained evidence: %s", exc)
+        except (FuturesTimeout, Exception) as exc:  # timeout OR any provider failure → degrade
+            logger.info("Vision extraction failed/timed out; returning abstained evidence: %s", exc)
             return self._abstained(sha, model="stub", source="stub")
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def _parse(self, raw: Dict[str, Any], sha: str, model: str) -> VisionEvidence:
         attrs: Dict[str, Any] = {}
