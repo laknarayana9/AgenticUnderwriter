@@ -1,4 +1,5 @@
 import importlib.util
+import os
 
 import pytest
 
@@ -14,6 +15,11 @@ from app.rating import RatingTool
 
 _BM25_AVAILABLE = importlib.util.find_spec("rank_bm25") is not None
 _CROSS_ENCODER_AVAILABLE = importlib.util.find_spec("sentence_transformers") is not None
+# Tests that actually load a sentence-transformers/cross-encoder model hit the
+# HuggingFace hub on first run, so they are NOT hermetic. Keep them opt-in
+# (RUN_MODEL_TESTS=1) so the default suite — and CI — never reaches the network.
+_RUN_MODEL_TESTS = _CROSS_ENCODER_AVAILABLE and os.getenv("RUN_MODEL_TESTS") == "1"
+_MODEL_TEST_REASON = "model-download test; set RUN_MODEL_TESTS=1 (and install sentence-transformers) to run"
 
 
 def test_rag_lexical_fallback_retrieves_citable_guidelines(tmp_path):
@@ -72,7 +78,7 @@ def test_semantic_mode_returns_structured_citation_results(tmp_path):
         assert chunk.metadata["embedding_model"] == "hashing-underwriting-v1"
 
 
-@pytest.mark.skipif(not _CROSS_ENCODER_AVAILABLE, reason="sentence-transformers not installed")
+@pytest.mark.skipif(not _RUN_MODEL_TESTS, reason=_MODEL_TEST_REASON)
 def test_sentence_transformer_embeddings_produce_semantic_results(tmp_path):
     """The real embedding provider (not the hashing default) drives semantic mode."""
     rag = RAGEngine(
@@ -208,7 +214,7 @@ def test_rerank_unavailable_falls_back_gracefully(tmp_path, monkeypatch):
     assert all(not chunk.metadata.get("reranked") for chunk in chunks)
 
 
-@pytest.mark.skipif(not _CROSS_ENCODER_AVAILABLE, reason="sentence-transformers not installed")
+@pytest.mark.skipif(not _RUN_MODEL_TESTS, reason=_MODEL_TEST_REASON)
 def test_reranker_reorders_and_annotates_when_available(tmp_path):
     rag = RAGEngine(
         chroma_path=str(tmp_path / "chroma"),
