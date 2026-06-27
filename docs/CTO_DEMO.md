@@ -12,7 +12,7 @@ cp .env.example .env                   # fill in OPENAI_API_KEY (and optionally 
 
 ## 1. Unit + Product Test Suite (CI gate)
 
-*Shows: 42 passing product tests, fully deterministic, no LLM calls needed.*
+*Shows: 113 passing product tests, fully deterministic, no LLM calls needed.*
 
 ```bash
 pytest tests/ -q
@@ -20,7 +20,7 @@ pytest tests/ -q
 
 **Expected output:**
 ```
-91 passed in Xs
+113 passed in Xs
 ```
 
 ---
@@ -238,7 +238,68 @@ python3 evals/langsmith_eval.py run-eval --experiment-prefix baseline
 
 ---
 
-## 9. Fine-Tune Track (Nebius Token Factory)
+## 9. Vision Intake — Photo → Submission Enrichment
+
+*Shows: property photo flows into the workflow via GPT-4o vision; confident attributes fold into the submission; low-confidence fields pause for follow-up.*
+
+```bash
+# Contrast demo: same submission, with vs without a photo (fake provider, no API key needed)
+python3 scripts/vision_workflow_demo.py --demo-contrast
+```
+
+**Look for:**
+- Run 1 (no photo): `waiting_for_info` because roof age is unknown
+- Run 2 (photo provided): vision evidence fills in roof condition → workflow proceeds to decision
+
+**With a real photo and `OPENAI_API_KEY` set:**
+```bash
+python3 scripts/vision_workflow_demo.py --image /path/to/property_photo.jpg
+```
+
+**Look for:** `vision_evidence_applied` event in the audit trail, extracted attributes (roof condition, stories, construction type) folded into the submission before the rules run.
+
+**API endpoint (multipart):**
+```bash
+curl -s -X POST http://localhost:8000/quote/ho3/with-photo \
+  -F 'submission={"submission":{"applicant":{"full_name":"Alex Kim","email":"alex@example.com","phone":"+1-555-100-0001"},"risk":{"property_address":"100 Pine St, Palo Alto, CA 94301","occupancy":"owner_occupied_primary","dwelling_type":"single_family","year_built":2005,"construction_type":"frame","stories":1},"coverage_request":{"coverage_a":500000,"coverage_b_pct":10,"coverage_c_pct":50,"coverage_d_pct":20,"coverage_e":300000,"coverage_f":5000,"deductible":1000}}};type=application/json' \
+  -F 'photo=@/path/to/photo.jpg' | python3 -m json.tool
+```
+
+---
+
+## 10. LLM-as-Judge Calibration (Critic Faithfulness)
+
+*Shows: the generator-critic loop's faithfulness judge calibrated against 24 human-labeled rationales — agreement, Cohen's kappa, and false-negative rate.*
+
+```bash
+# Run calibration with the deterministic simulated stand-in (no API key needed)
+python3 evals/judge_calibration.py \
+  --backend simulated \
+  --dataset evals/datasets/judge_calibration.jsonl
+```
+
+**Expected output:**
+```
+agreement:      0.xxx
+cohens_kappa:   0.xxx
+false_neg_rate: 0.xxx   ← fail-open rate (judge misses a bad rationale)
+```
+
+**With a real LLM judge (uses `ANTHROPIC_API_KEY`, Claude grades independently of the generator):**
+```bash
+python3 evals/judge_calibration.py \
+  --backend llm \
+  --dataset evals/datasets/judge_calibration.jsonl
+```
+
+**Look for:**
+- `cohens_kappa > 0.6` — substantial judge/human agreement
+- `false_neg_rate < 0.2` — judge rarely lets bad rationales through
+- The critic defaults to Claude (`CRITIC_LLM_PROVIDER=claude`) independent of the generator to avoid self-grading bias
+
+---
+
+## 11. Fine-Tune Track (Nebius Token Factory)
 
 *Shows: LoRA extraction workflow generating training data and submitting a fine-tune job.*
 
@@ -251,7 +312,7 @@ python3 scripts/extraction_workflow_demo.py
 
 ---
 
-## 10. Streamlit Interactive Demo
+## 12. Streamlit Interactive Demo
 
 *Shows: full UI — edit a submission, run the workflow, view citations and audit trail.*
 
@@ -274,7 +335,7 @@ Open `http://localhost:8501` in a browser.
 
 | # | Feature | Proof point |
 |---|---------|-------------|
-| 1 | Test suite | 91 passing product tests, CI-ready |
+| 1 | Test suite | 113 passing product tests, CI-ready |
 | 2 | Core workflow | 7-agent pipeline → cited ACCEPT/REFER/DECLINE |
 | 3 | Missing-info loop | Pause → resume on same run ID with audit |
 | 4 | HITL review queue | High-risk cases routed to human review |
@@ -282,5 +343,7 @@ Open `http://localhost:8501` in a browser.
 | 6 | Retrieval | BM25 + RRF hybrid + cross-encoder reranking |
 | 7 | CI eval harness | 206-case golden set, gated thresholds |
 | 8 | LangSmith | Tracing, versioned dataset, registered evaluators, comparison view |
-| 9 | Fine-tuning | LoRA extraction pipeline on Nebius Token Factory |
-| 10 | Streamlit UI | End-to-end interactive demo |
+| 9 | Vision intake | Property photo → GPT-4o → submission enrichment via `/quote/ho3/with-photo` |
+| 10 | LLM-as-judge | Critic calibrated against human labels, Cohen's kappa, fail-open rate |
+| 11 | Fine-tuning | LoRA extraction pipeline on Nebius Token Factory |
+| 12 | Streamlit UI | End-to-end interactive demo |
