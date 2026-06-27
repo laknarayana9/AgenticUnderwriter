@@ -81,8 +81,11 @@ class CriticAgent:
     """Verifies ProducerRationaleOutput faithfulness against retrieved evidence."""
 
     def __init__(self) -> None:
-        critic_provider = os.getenv("CRITIC_LLM_PROVIDER", os.getenv("LLM_PROVIDER", "openai")).strip().lower()
-        critic_model = os.getenv("CRITIC_LLM_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")).strip()
+        # Default the judge to Claude, independent of the generator's provider,
+        # so the critic does not grade output produced by the same model
+        # (self-grading bias). Override with CRITIC_LLM_PROVIDER / CRITIC_LLM_MODEL.
+        critic_provider = os.getenv("CRITIC_LLM_PROVIDER", "claude").strip().lower()
+        critic_model = os.getenv("CRITIC_LLM_MODEL", "claude-sonnet-4-6").strip()
 
         config = LLMServiceConfig(
             enabled=bool(os.getenv("LLM_STRUCTURED_OUTPUT_ENABLED", "false").lower() in {"1", "true", "yes"}),
