@@ -189,9 +189,9 @@ not *confident error*) — the same shape as failure mode #6 for text extraction
 Mitigations: vision is off the default path; only `defensible_space_present` maps
 to a rule, and that path still routes high-wildfire risks to human review;
 extraction quality is measured (`evals/vision_eval.py`). **PII:** property photos
-may contain faces/plates/house numbers; hosted providers send the image out, so a
-local vision provider is the privacy-preserving option, and only the image SHA is
-stored.
+may contain faces/plates/house numbers; hosted providers send the image out, so
+the **local Ollama vision provider (`VISION_PROVIDER=ollama`) keeps photos
+on-device** — closing the privacy gap — and only the image SHA is stored.
 
 ## How these are caught in aggregate
 

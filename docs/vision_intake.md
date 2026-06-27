@@ -41,10 +41,15 @@ deterministic gate asks — it can never decide. `scripts/vision_workflow_demo.p
 
 ```bash
 VISION_ENABLED=true                 # off by default (CI/offline → deterministic stub)
-VISION_PROVIDER=openai              # openai (default); claude/ollama can be added
+VISION_PROVIDER=openai              # openai (default) or ollama (local, on-device)
 VISION_MODEL=gpt-4o                 # vision-capable model
 VISION_MIN_CONFIDENCE=0.6           # below this, defer to the missing-info gate
-OPENAI_API_KEY=...
+OPENAI_API_KEY=...                  # for VISION_PROVIDER=openai
+
+# Fully local / private alternative (photos never leave the machine):
+VISION_PROVIDER=ollama
+VISION_MODEL=llama3.2-vision        # or llava
+OLLAMA_BASE_URL=http://localhost:11434
 ```
 
 Disabled or unavailable → the service returns fully abstained evidence, so the
@@ -74,6 +79,6 @@ labeled photos, run against actual images.
 - The vision stage is timed (`stage_timings["vision_intake"]`), so it shows up in
   the per-request latency budget.
 - **PII caveat:** property photos can contain faces, plates, or house numbers.
-  Hosted providers (OpenAI/Claude) send the image out; a local provider
-  (Ollama vision) is the privacy-preserving option for real deployments. See
-  failure mode #11 in `docs/failure-modes.md`.
+  Hosted providers (OpenAI) send the image out; the **local Ollama provider
+  (`VISION_PROVIDER=ollama`) keeps photos on-device** — the privacy-preserving
+  option for real deployments. See failure mode #11 in `docs/failure-modes.md`.

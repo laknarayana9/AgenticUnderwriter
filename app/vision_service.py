@@ -48,12 +48,28 @@ VISION_SYSTEM_PROMPT = (
 )
 
 
+def vision_user_instruction() -> str:
+    """Shared user instruction listing the required attributes and output shape.
+
+    Used by every vision provider so the prompt and the parser stay in sync."""
+    keys = ", ".join(VISION_ATTRIBUTES)
+    return (
+        "Assess this property photo for underwriting. Return a JSON object with "
+        f"exactly these keys: {keys}. Each value is an object "
+        '{"value": <bool|string|list|null>, "confidence": <0..1>, "visible": <bool>}. '
+        "Set visible=false and value=null for anything you cannot assess from the "
+        "image. hazards.value is a list of detected hazards "
+        "(pool, trampoline, overhanging_trees, ...) or []. JSON only."
+    )
+
+
 @dataclass(frozen=True)
 class VisionServiceConfig:
     enabled: bool = False
     provider: str = "openai"
     model: str = "gpt-4o"
     api_key: Optional[str] = None
+    base_url: Optional[str] = None
     # Only attributes at/above this confidence are folded into the submission;
     # below it, the workflow's missing-info gate asks a human instead.
     min_confidence: float = 0.6
@@ -65,11 +81,20 @@ class VisionServiceConfig:
             min_conf = float(os.getenv("VISION_MIN_CONFIDENCE", "0.6"))
         except ValueError:
             min_conf = 0.6
+        if provider == "ollama":
+            api_key = ""  # not used by Ollama
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+            default_model = os.getenv("VISION_MODEL", "llama3.2-vision").strip()
+        else:
+            api_key = os.getenv("OPENAI_API_KEY") if provider == "openai" else os.getenv("ANTHROPIC_API_KEY")
+            base_url = None
+            default_model = os.getenv("VISION_MODEL", "gpt-4o").strip()
         return cls(
             enabled=os.getenv("VISION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
             provider=provider,
-            model=os.getenv("VISION_MODEL", "gpt-4o").strip(),
-            api_key=os.getenv("OPENAI_API_KEY") if provider == "openai" else os.getenv("ANTHROPIC_API_KEY"),
+            model=default_model,
+            api_key=api_key,
+            base_url=base_url,
             min_confidence=max(0.0, min(1.0, min_conf)),
         )
 
@@ -101,6 +126,9 @@ class VisionEvidenceService:
             if self.config.provider == "openai":
                 from app.providers.openai_vision_provider import OpenAIVisionProvider
                 return OpenAIVisionProvider(api_key=self.config.api_key or "", model=self.config.model)
+            if self.config.provider == "ollama":
+                from app.providers.ollama_vision_provider import OllamaVisionProvider
+                return OllamaVisionProvider(model=self.config.model, base_url=self.config.base_url)
             logger.info("Unsupported vision provider '%s'; vision disabled", self.config.provider)
             return None
         except Exception as exc:  # noqa: BLE001 - missing key/SDK → disabled, not fatal

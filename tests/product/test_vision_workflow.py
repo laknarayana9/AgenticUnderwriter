@@ -88,6 +88,50 @@ def test_provider_build_returns_none_without_key():
     assert svc.provider is None
 
 
+def test_ollama_vision_config_and_build(monkeypatch):
+    monkeypatch.setenv("VISION_ENABLED", "true")
+    monkeypatch.setenv("VISION_PROVIDER", "ollama")
+    monkeypatch.delenv("VISION_MODEL", raising=False)
+    cfg = VisionServiceConfig.from_env()
+    assert cfg.provider == "ollama"
+    assert cfg.model == "llama3.2-vision"
+    assert cfg.base_url
+    from app.providers.ollama_vision_provider import OllamaVisionProvider
+    svc = VisionEvidenceService(config=cfg)
+    assert isinstance(svc.provider, OllamaVisionProvider)
+
+
+def test_ollama_vision_extract_parses_response(monkeypatch):
+    import urllib.request
+    from app.providers.ollama_vision_provider import OllamaVisionProvider
+
+    class _Resp:
+        def __init__(self, data): self._d = data
+        def read(self): return self._d
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    content = json.dumps({"defensible_space_present": {"value": True, "confidence": 0.9, "visible": True}})
+    body = json.dumps({"message": {"content": content}}).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp(body))
+
+    out = OllamaVisionProvider(model="llama3.2-vision").extract(b"img", "sys")
+    assert out["defensible_space_present"]["value"] is True
+
+
+def test_ollama_vision_failure_degrades_to_abstained(monkeypatch):
+    import urllib.request
+    from app.providers.ollama_vision_provider import OllamaVisionProvider
+
+    def boom(*a, **k):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    svc = VisionEvidenceService(provider=OllamaVisionProvider(model="x"))
+    ev = svc.extract_evidence(b"img")
+    assert ev.source == "stub"  # any provider error degrades to abstained
+
+
 def test_vision_eval_metrics():
     pred = VisionEvidence(
         image_sha256="x", model="m", source="llm",
