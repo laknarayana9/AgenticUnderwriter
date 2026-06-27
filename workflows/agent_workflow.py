@@ -91,7 +91,7 @@ class UnderwritingWorkflow:
         if previous_state.status != "waiting_for_info":
             raise ValueError("Only runs waiting for information can be resumed")
 
-        updated_submission, applied_answers = self._apply_followup_answers(
+        updated_submission, applied_answers = self.apply_followup_answers(
             previous_state.submission_raw or {},
             previous_state.required_questions,
             additional_answers,
@@ -131,6 +131,9 @@ class UnderwritingWorkflow:
         masked inside the packager/critic via mask_map; the loop fails closed to a
         deterministic rationale after max retries.
         """
+        # Copy so the critic-feedback mutation below never leaks back to the
+        # caller's dict (this method is shared by the native and LangGraph engines).
+        assessment_result = dict(assessment_result)
         verdicts: List[Dict[str, Any]] = []
         events: List[Dict[str, Any]] = []
         decision_packet = None
@@ -182,7 +185,7 @@ class UnderwritingWorkflow:
         Shared implementation for run() and resume(). Accepts optional prior_events
         and additional_answers to support mid-workflow resumption.
         """
-        submission_raw = self._ensure_ho3_raw(submission_raw)
+        submission_raw = self.ensure_ho3_raw(submission_raw)
         tracer = get_tracer("underwriting_workflow")
         workflow_start = time.time()
         
@@ -288,7 +291,7 @@ class UnderwritingWorkflow:
                     )
                     workflow_state.enrichment = enrichment_data
 
-                followup_questions = self._detect_contextual_missing_info(
+                followup_questions = self.detect_contextual_missing_info(
                     workflow_state.submission_canonical,
                     enrichment_data,
                 )
@@ -326,7 +329,7 @@ class UnderwritingWorkflow:
                 # Step 7: Rating
                 with timed_stage(tracer, "rating", workflow_state.stage_timings):
                     workflow_state.current_node = "rating"
-                    rating_data = self._prepare_rating_data(
+                    rating_data = self.prepare_rating_data(
                         workflow_state.submission_canonical,
                         enrichment_data
                     )
@@ -515,7 +518,7 @@ class UnderwritingWorkflow:
             additional_info=None
         )
 
-    def _ensure_ho3_raw(self, submission_raw: Dict[str, Any]) -> Dict[str, Any]:
+    def ensure_ho3_raw(self, submission_raw: Dict[str, Any]) -> Dict[str, Any]:
         """Accept legacy quote submissions while the public API migrates to HO3."""
         if {"applicant", "risk", "coverage_request"}.issubset(submission_raw.keys()):
             return submission_raw
@@ -543,7 +546,7 @@ class UnderwritingWorkflow:
             }
         }
 
-    def _detect_contextual_missing_info(
+    def detect_contextual_missing_info(
         self,
         submission: HO3Submission,
         enrichment: Dict[str, Any],
@@ -580,7 +583,7 @@ class UnderwritingWorkflow:
             },
         )
 
-    def _apply_followup_answers(
+    def apply_followup_answers(
         self,
         submission_raw: Dict[str, Any],
         questions: List[Dict[str, Any]],
@@ -672,7 +675,7 @@ class UnderwritingWorkflow:
             "next_steps": ["Manual underwriter review required"]
         }
 
-    def _prepare_rating_data(self, submission: HO3Submission, enrichment: Dict) -> Dict[str, Any]:
+    def prepare_rating_data(self, submission: HO3Submission, enrichment: Dict) -> Dict[str, Any]:
         """Prepare data for rating engine."""
         property_profile = enrichment.get("property_profile", {})
         hazard_profile = enrichment.get("hazard_profile", {})

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 import uuid
 from datetime import datetime
 from operator import add
@@ -69,12 +70,19 @@ class LangGraphUnderwritingWorkflow:
 
         db_path = checkpoint_db or os.getenv("LANGGRAPH_CHECKPOINT_DB", DEFAULT_CHECKPOINT_DB)
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        # One SQLite connection is shared across FastAPI's threadpool
+        # (check_same_thread=False). SQLite does not allow concurrent writes on a
+        # single connection, so graph invocations are serialized by self._lock.
+        # This is correct for the single-instance (max_containers=1) demo; a
+        # horizontally-scaled deployment needs an out-of-process checkpoint store
+        # (Postgres checkpointer) instead.
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self.checkpointer = SqliteSaver(self._conn)
         try:
             self.checkpointer.setup()
         except Exception:
             pass  # setup is idempotent / lazily handled
+        self._lock = threading.Lock()
         self.graph = self._build_graph()
 
     # --- graph construction -------------------------------------------------
@@ -101,7 +109,7 @@ class LangGraphUnderwritingWorkflow:
         if norm["missing_info"]:
             # Pauses durably; on resume `interrupt` returns the supplied answers.
             answers = interrupt({"stage": "intake_normalization", "questions": norm["questions"]})
-            updated, applied = self.native._apply_followup_answers(
+            updated, applied = self.native.apply_followup_answers(
                 state["submission_raw"], norm["questions"], answers,
             )
             return {
@@ -114,10 +122,10 @@ class LangGraphUnderwritingWorkflow:
     def _enrich(self, state: UWGraphState) -> Dict[str, Any]:
         submission = HO3Submission(**state["submission_raw"])
         enrichment = self.native.enrichment_agent.enrich(submission)
-        followups = self.native._detect_contextual_missing_info(submission, enrichment)
+        followups = self.native.detect_contextual_missing_info(submission, enrichment)
         if followups:
             answers = interrupt({"stage": "contextual_missing_info", "questions": followups})
-            updated, applied = self.native._apply_followup_answers(
+            updated, applied = self.native.apply_followup_answers(
                 state["submission_raw"], followups, answers,
             )
             return {
@@ -140,7 +148,7 @@ class LangGraphUnderwritingWorkflow:
 
     def _rate(self, state: UWGraphState) -> Dict[str, Any]:
         submission = HO3Submission(**state["submission_raw"])
-        rating_data = self.native._prepare_rating_data(submission, state["enrichment"])
+        rating_data = self.native.prepare_rating_data(submission, state["enrichment"])
         rating = self.native.rating_tool.calculate_premium(rating_data["coverage_amount"], rating_data)
         return {"rating": rating}
 
@@ -174,7 +182,7 @@ class LangGraphUnderwritingWorkflow:
     # --- public API ---------------------------------------------------------
     def run(self, submission_raw: Dict[str, Any], image_bytes: Optional[bytes] = None,
             thread_id: Optional[str] = None) -> Dict[str, Any]:
-        submission_raw = self.native._ensure_ho3_raw(submission_raw)
+        submission_raw = self.native.ensure_ho3_raw(submission_raw)
         if image_bytes:
             evidence = self.native.vision_service.extract_evidence(image_bytes)
             submission_raw, _ = fold_vision_into_submission(
@@ -188,12 +196,14 @@ class LangGraphUnderwritingWorkflow:
             "events": [],
             "critic_verdicts": [],
         }
-        result = self.graph.invoke(init, self._config(thread_id))
+        with self._lock:
+            result = self.graph.invoke(init, self._config(thread_id))
         return self._summarize(result, thread_id)
 
     def resume(self, thread_id: str, answers: Dict[str, Any]) -> Dict[str, Any]:
         """Resume a durably-paused run by thread_id with the supplied answers."""
-        result = self.graph.invoke(Command(resume=answers), self._config(thread_id))
+        with self._lock:
+            result = self.graph.invoke(Command(resume=answers), self._config(thread_id))
         return self._summarize(result, thread_id)
 
     @staticmethod

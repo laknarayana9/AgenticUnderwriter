@@ -36,7 +36,14 @@ jobs:
       - name: Verify generated eval dataset is committed
         run: git diff --exit-code -- evals/datasets/ho3_labeled.jsonl
 
-      - name: Run labeled underwriting eval gate
+      # NOTE: this is a deterministic CONTRACT / REGRESSION gate, not a model-quality
+      # gate. Decision accuracy, reason-code match, and faithfulness are 100% *by
+      # construction* (labels derive from the same ruleset), so this proves the
+      # implementation still matches its spec — it does not measure AI quality.
+      # Model quality is measured out-of-band by evals/judge_calibration.py and the
+      # retrieval recall numbers in docs/retrieval_eval.md (not gated here because
+      # they need real model/keys and would break CI hermeticity).
+      - name: Run labeled underwriting eval gate (deterministic contract check)
         run: >-
           PYTHONPATH=. python -m evals.run
           --dataset evals/datasets/ho3_labeled.jsonl
