@@ -31,6 +31,7 @@ Concretely:
   2. **Missing-info question wording** — given a structured list of missing fields from `IntakeNormalizerAgent`, the LLM rewrites the questions into producer-friendly language; it cannot change *which* fields are required.
   3. **Intake extraction (optional)** — a fine-tuned model can extract structured intake fields from a free-text producer note (see `docs/finetuning.md`). This sits *upstream* of the rules, but it does not decide: any field the model fails to extract, or correctly abstains on (null), is caught by the deterministic missing-info gate, which pauses the run to ask. The fine-tune is trained for that abstention precisely so an unstated fact is never silently invented into the decision.
   4. **Rationale critic and ops explanations** — a *separate* critic model verifies rationale faithfulness (see below), and an optional model narrates monitoring anomalies. Neither touches eligibility.
+  5. **Vision evidence intake (optional)** — a vision model can extract risk attributes from a property photo (see `docs/vision_intake.md`). Like text extraction, this is *upstream* of the rules and deterministically guarded: only a confident, visible attribute folds into a rule-consumed field (e.g. `wildfire_mitigation_evidence`), it never overwrites a producer value, and anything the model abstains on falls to the missing-info gate. The photo is provenance (SHA only), not a decision input.
 - Every LLM call goes through `StructuredLLMService` (or the critic's own client) with Pydantic-validated output schemas, PII masking applied before the prompt is sent, and deterministic fallback paths. If a model is unavailable or returns invalid output, the workflow falls back to templated/deterministic copy and the decision is unaffected.
 - Two guardrails defend the boundary: the `VerifierGuardrailAgent` requires every REFER/DECLINE to carry guideline citations (forcing a referral otherwise), and a **generator–critic loop** verifies that the LLM rationale is grounded in the retrieved evidence — failing closed to a deterministic rationale when it is not.
 
@@ -121,6 +122,7 @@ If we add a line where the rules genuinely cannot be enumerated (e.g., specialty
 - `app/underwriting_rules.py` — rule engine and decision logic
 - `app/llm_service.py` — bounded LLM service with Pydantic schemas and fallback
 - `app/pii_masker.py` — PII masking applied before every LLM prompt
+- `app/vision_service.py` and `docs/vision_intake.md` — fenced vision evidence intake (upstream of the rules, confidence-gated, guarded by the missing-info gate)
 - `workflows/agent_workflow.py` — multi-stage pipeline orchestration
 - `workflows/agents.py` — stage handlers (deterministic; "Agent" is a role label, not an LLM driver)
 - `workflows/critic.py` — generator–critic loop for rationale faithfulness (separate critic model)

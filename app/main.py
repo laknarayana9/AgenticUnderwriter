@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List, Literal, Union
@@ -526,6 +526,28 @@ async def run_ho3_quote_processing(request: HO3RunRequest):
             status_code=500,
             detail=f"Processing failed: {str(e)}"
         )
+
+
+@app.post("/quote/ho3/with-photo", response_model=QuoteRunResponse)
+async def run_ho3_with_photo(submission: str = Form(...), photo: UploadFile = File(...)):
+    """
+    Process an HO3 submission with a property photo. The fenced vision service
+    extracts risk evidence (e.g. defensible-space presence) from the photo into
+    the submission before deterministic decisioning. `submission` is the HO3
+    submission JSON as a form field; `photo` is the image file.
+    """
+    try:
+        payload = _normalize_ho3_payload(json.loads(submission))
+    except (json.JSONDecodeError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid submission JSON: {e}")
+
+    image_bytes = await photo.read()
+    try:
+        workflow_state = workflow.run(payload, image_bytes=image_bytes)
+        run_id = store_run_record(workflow_state)
+        return _build_quote_response(workflow_state, run_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
 @app.get("/runs/{run_id}", response_model=RunStatusResponse)

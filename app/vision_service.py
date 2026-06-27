@@ -24,6 +24,10 @@ from models.schemas import VisionAttribute, VisionEvidence
 
 logger = logging.getLogger(__name__)
 
+
+class VisionUnavailable(RuntimeError):
+    """Raised when a configured vision provider cannot be constructed."""
+
 # Attributes the vision model is asked to assess. Kept here so the prompt and the
 # parser stay in sync; a real provider is told to return exactly these keys with
 # {value, confidence, visible} each, abstaining (visible=false) when unsure.
@@ -85,7 +89,23 @@ class VisionEvidenceService:
     def __init__(self, config: Optional[VisionServiceConfig] = None,
                  provider: Optional[VisionProvider] = None):
         self.config = config or VisionServiceConfig.from_env()
-        self.provider = provider  # real provider injected/built in Phase 3
+        # An injected provider wins (tests); otherwise build from config. With
+        # vision disabled or the provider unavailable, this stays None and the
+        # service returns abstained evidence.
+        self.provider = provider or self._build_provider()
+
+    def _build_provider(self) -> Optional[VisionProvider]:
+        if not self.config.enabled or self.config.provider in {"", "none", "disabled"}:
+            return None
+        try:
+            if self.config.provider == "openai":
+                from app.providers.openai_vision_provider import OpenAIVisionProvider
+                return OpenAIVisionProvider(api_key=self.config.api_key or "", model=self.config.model)
+            logger.info("Unsupported vision provider '%s'; vision disabled", self.config.provider)
+            return None
+        except Exception as exc:  # noqa: BLE001 - missing key/SDK → disabled, not fatal
+            logger.info("Vision provider unavailable, using abstained evidence: %s", exc)
+            return None
 
     def extract_evidence(self, image_bytes: bytes) -> VisionEvidence:
         sha = hashlib.sha256(image_bytes or b"").hexdigest()

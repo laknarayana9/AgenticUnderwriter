@@ -34,6 +34,7 @@ from app.rag_engine import RAGEngine
 from app.rating import RatingTool
 from app.pii_masker import PIIMasker
 from workflows.critic import CriticAgent
+from app.vision_service import VisionEvidenceService, fold_vision_into_submission
 
 
 class UnderwritingWorkflow:
@@ -69,11 +70,19 @@ class UnderwritingWorkflow:
         self.critic_agent = CriticAgent()
         self._critic_max_retries = int(os.getenv("CRITIC_MAX_RETRIES", "2"))
 
-    def run(self, submission_raw: Dict[str, Any]) -> WorkflowState:
+        # Fenced vision evidence service (multimodal intake). Disabled by default;
+        # extracts risk attributes from a property photo into the submission before
+        # the deterministic rules run. Never participates in the decision.
+        self.vision_service = VisionEvidenceService()
+
+    def run(self, submission_raw: Dict[str, Any], image_bytes: Optional[bytes] = None) -> WorkflowState:
         """
         Run the underwriting workflow with a raw HO3 submission.
+
+        An optional property photo (`image_bytes`) is run through the fenced vision
+        service and folded into the submission before decisioning.
         """
-        return self._run(submission_raw)
+        return self._run(submission_raw, image_bytes=image_bytes)
 
     def resume(self, previous_state: WorkflowState, additional_answers: Dict[str, Any]) -> WorkflowState:
         """
@@ -112,6 +121,7 @@ class UnderwritingWorkflow:
         quote_id: Optional[str] = None,
         prior_events: Optional[List[Dict[str, Any]]] = None,
         additional_answers: Optional[Dict[str, Any]] = None,
+        image_bytes: Optional[bytes] = None,
     ) -> WorkflowState:
         """
         Shared implementation for run() and resume(). Accepts optional prior_events
@@ -143,6 +153,29 @@ class UnderwritingWorkflow:
             )
 
             try:
+                # Step 0: Vision evidence intake (optional, fenced).
+                # Folds confident, visible photo attributes into the submission so
+                # the deterministic rules and missing-info gate see them. When vision
+                # is disabled/unavailable the evidence abstains and nothing changes —
+                # the gate then pauses to ask a human, exactly as without a photo.
+                if image_bytes:
+                    with timed_stage(tracer, "vision_intake", workflow_state.stage_timings):
+                        workflow_state.current_node = "vision_intake"
+                        evidence = self.vision_service.extract_evidence(image_bytes)
+                        submission_raw, vision_applied = fold_vision_into_submission(
+                            submission_raw, evidence, self.vision_service.config.min_confidence,
+                        )
+                        workflow_state.submission_raw = submission_raw
+                        workflow_state.events.append({
+                            "event": "vision_evidence_applied",
+                            "timestamp": datetime.now().isoformat(),
+                            "image_sha256": evidence.image_sha256,
+                            "model": evidence.model,
+                            "source": evidence.source,
+                            "applied_fields": vision_applied.get("fields", {}),
+                            "observed": vision_applied.get("observed", {}),
+                        })
+
                 # Step 1: Intake Normalization
                 with timed_stage(tracer, "intake_normalization", workflow_state.stage_timings):
                     workflow_state.current_node = "intake_normalization"
