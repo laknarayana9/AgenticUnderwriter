@@ -115,6 +115,46 @@ class ProducerRationaleOutput(BaseModel):
     source: Literal["llm", "fallback"] = Field("fallback", description="Whether wording came from an LLM provider or fallback path")
 
 
+class VisionAttribute(BaseModel):
+    """One risk attribute extracted from a property image.
+
+    `visible` is the abstention signal: False means the attribute could not be
+    assessed from the image, so callers must not treat `value` as fact. This
+    mirrors the text extractor's null-on-unstated behavior — the model must
+    abstain rather than guess.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    value: Optional[Any] = Field(None, description="Extracted value (bool/str/list), or null when not visible")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Model confidence in this attribute")
+    visible: bool = Field(False, description="Whether the attribute could be assessed from the image at all")
+
+
+def _abstained_attribute() -> "VisionAttribute":
+    return VisionAttribute(value=None, confidence=0.0, visible=False)
+
+
+class VisionEvidence(BaseModel):
+    """Structured risk evidence extracted from a property photo.
+
+    This is *input* to the deterministic rules, never a decision. Each attribute
+    abstains independently; the image hash is the provenance handle cited in the
+    audit trail (raw images are not stored).
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    roof_material: VisionAttribute = Field(default_factory=_abstained_attribute)
+    roof_condition: VisionAttribute = Field(default_factory=_abstained_attribute)
+    roof_damage: VisionAttribute = Field(default_factory=_abstained_attribute)
+    tarp_present: VisionAttribute = Field(default_factory=_abstained_attribute)
+    defensible_space_present: VisionAttribute = Field(default_factory=_abstained_attribute)
+    hazards: VisionAttribute = Field(default_factory=_abstained_attribute, description="value = list of detected hazards (pool, trampoline, overhanging_trees, ...)")
+
+    image_sha256: str = Field(..., description="SHA-256 of the source image (provenance; raw image not stored)")
+    model: str = Field("stub", description="Vision model/provider that produced this evidence")
+    source: Literal["llm", "stub"] = Field("stub", description="Whether a vision model produced this, or the deterministic stub")
+
+
 class MissingInfoQuestionOutput(BaseModel):
     """Validated follow-up wording for missing or uncertain underwriting facts."""
     model_config = ConfigDict(extra="forbid")

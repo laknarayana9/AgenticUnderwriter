@@ -2,10 +2,10 @@
 
 Companion to [ADR-0001](adr/0001-llm-out-of-decision-path.md). Keeping the LLM
 out of the eligibility decision path closes off one entire failure class
-(model-induced decision drift) but not all of them. This catalog enumerates ten
-ways the system can be wrong, the guardrail(s) that catch each, and the **residual
-risk** that remains. Residual risk is stated honestly — a guardrail that "fails
-open" is called out as such.
+(model-induced decision drift) but not all of them. This catalog enumerates
+eleven ways the system can be wrong, the guardrail(s) that catch each, and the
+**residual risk** that remains. Residual risk is stated honestly — a guardrail
+that "fails open" is called out as such.
 
 Severity is the impact if the failure reaches a bound decision; Likelihood is
 rough and qualitative.
@@ -22,6 +22,7 @@ rough and qualitative.
 | 8 | Edge-case rule gap | Stratified eval suite + severity precedence | Unknown-unknowns |
 | 9 | PII leakage to provider | PII masking before every prompt | Free-text PII outside known fields |
 | 10 | Silent LLM failure / fail-open | Deterministic fallbacks everywhere | Unverified rationale text may ship |
+| 11 | Vision misread / hallucinated attribute | Abstention + confidence gate + missing-info gate | A confident-but-wrong attribute folds in; PII in raw photos |
 
 ---
 
@@ -169,6 +170,28 @@ exposure is misleading explanatory prose, surfaced to a human reviewer who can
 compare it against the structured decision and `facts_used`.
 
 ---
+
+## 11. Vision misread / hallucinated attribute
+
+**Failure:** the optional vision intake reads a property photo wrong — e.g. claims
+defensible space that isn't there — and folds a false value into
+`wildfire_mitigation_evidence`.
+
+**Guardrail:** the vision model is trained/prompted to **abstain** (`visible=false`)
+when it cannot assess an attribute; `fold_vision_into_submission` applies a value
+only when it is visible **and** above `VISION_MIN_CONFIDENCE`, and **never
+overwrites** a producer-supplied value. Below threshold or abstained → the
+deterministic missing-info gate asks a human. The decision remains rules-owned.
+
+**Residual risk — the important one:** a **confident-but-wrong** non-null
+attribute clears the gate (the abstention/confidence guard catches *uncertainty*,
+not *confident error*) — the same shape as failure mode #6 for text extraction.
+Mitigations: vision is off the default path; only `defensible_space_present` maps
+to a rule, and that path still routes high-wildfire risks to human review;
+extraction quality is measured (`evals/vision_eval.py`). **PII:** property photos
+may contain faces/plates/house numbers; hosted providers send the image out, so a
+local vision provider is the privacy-preserving option, and only the image SHA is
+stored.
 
 ## How these are caught in aggregate
 
