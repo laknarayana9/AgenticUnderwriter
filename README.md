@@ -24,6 +24,11 @@ orchestration around the decisioning layer.
 - Seven-step deterministic agent workflow orchestration for intake, routing,
   enrichment, retrieval, assessment, verification, rating, and decision
   packaging.
+- Two interchangeable orchestration engines — a native explicit state machine
+  (default) and a **LangGraph** `StateGraph` with durable, checkpointed
+  human-in-the-loop pause/resume — producing identical, rules-owned decisions.
+  Optional **LangChain** structured-output provider (`LLM_PROVIDER=langchain`).
+  See [docs/orchestration.md](docs/orchestration.md).
 - Missing-info loop for roof age, occupancy, applicant/address gaps, and
   wildfire mitigation evidence.
 - Same-run resume through `/runs/{run_id}/answers` with audit events preserved.

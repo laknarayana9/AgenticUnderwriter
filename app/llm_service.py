@@ -81,6 +81,10 @@ class LLMServiceConfig:
             api_key = ""  # not used
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
             default_model = os.getenv("OLLAMA_MODEL", "llama3.2").strip()
+        elif provider == "langchain":
+            api_key = os.getenv("OPENAI_API_KEY")
+            base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
+            default_model = "gpt-4o-mini"
         else:
             api_key = os.getenv("OPENAI_API_KEY")
             base_url = (os.getenv("OPENAI_BASE_URL") or "").strip() or None
@@ -261,12 +265,14 @@ class StructuredLLMService:
         from app.providers.claude_provider import ClaudeJSONProvider
         from app.providers.gemini_provider import GeminiJSONProvider
         from app.providers.ollama_provider import OllamaJSONProvider
+        from app.providers.langchain_provider import LangChainOpenAIProvider
         provider_classes = {
             "openai": OpenAIJSONProvider,
             "nebius": NebiusJSONProvider,
             "claude": ClaudeJSONProvider,
             "gemini": GeminiJSONProvider,
             "ollama": OllamaJSONProvider,
+            "langchain": LangChainOpenAIProvider,
         }
         provider_cls = provider_classes.get(self.config.provider)
         if provider_cls is None:

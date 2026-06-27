@@ -550,6 +550,43 @@ async def run_ho3_with_photo(submission: str = Form(...), photo: UploadFile = Fi
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
+_langgraph_engine = None
+
+
+def _get_langgraph_engine():
+    """Lazily build the LangGraph engine, reusing the native workflow's components
+    (no second RAG ingest) and importing langgraph only when actually used."""
+    global _langgraph_engine
+    if _langgraph_engine is None:
+        from workflows.langgraph_workflow import LangGraphUnderwritingWorkflow
+        _langgraph_engine = LangGraphUnderwritingWorkflow(native=workflow)
+    return _langgraph_engine
+
+
+@app.post("/quote/ho3/langgraph")
+async def run_ho3_langgraph(request: HO3RunRequest):
+    """
+    Run the same governed HO3 workflow via the alternative LangGraph engine.
+    Decisions are identical to the native engine (same deterministic rules); the
+    difference is orchestration + durable human-in-the-loop pause/resume. On a
+    missing-info pause this returns interrupted=true with a thread_id to resume.
+    """
+    payload = _normalize_ho3_payload(request.submission.model_dump(exclude_none=True))
+    try:
+        return _get_langgraph_engine().run(payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@app.post("/quote/ho3/langgraph/{thread_id}/resume")
+async def resume_ho3_langgraph(thread_id: str, request: MissingInfoAnswerRequest):
+    """Resume a durably-paused LangGraph run by thread_id with the answers."""
+    try:
+        return _get_langgraph_engine().resume(thread_id, request.answers)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Resume failed: {str(e)}")
+
+
 @app.get("/runs/{run_id}", response_model=RunStatusResponse)
 async def get_run_status(run_id: str):
     """

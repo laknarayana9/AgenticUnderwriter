@@ -114,6 +114,61 @@ class UnderwritingWorkflow:
             additional_answers=merged_answers,
         )
 
+    def package_decision_with_critic(
+        self,
+        assessment_result: Dict[str, Any],
+        rating_result: Any,
+        workflow_steps_summary: List[Dict[str, Any]],
+        retrieved_chunks: List[Dict[str, Any]],
+        facts_used: Dict[str, Any],
+        mask_map: Optional[Dict[str, str]],
+    ):
+        """Generator–critic decision-packaging loop, shared by the native and
+        LangGraph engines so the critic logic is never duplicated.
+
+        Returns (decision_packet, critic_verdicts, events). The caller owns where
+        those land (WorkflowState for native, graph state for LangGraph). PII is
+        masked inside the packager/critic via mask_map; the loop fails closed to a
+        deterministic rationale after max retries.
+        """
+        verdicts: List[Dict[str, Any]] = []
+        events: List[Dict[str, Any]] = []
+        decision_packet = None
+        for attempt in range(self._critic_max_retries + 1):
+            decision_packet = self.decision_packager.package(
+                assessment_result, rating_result, workflow_steps_summary, mask_map=mask_map,
+            )
+            verdict = self.critic_agent.verify_rationale(
+                rationale=decision_packet.producer_rationale,
+                retrieved_chunks=retrieved_chunks,
+                facts_used=facts_used,
+                attempt=attempt,
+                mask_map=mask_map,
+            )
+            verdicts.append(verdict.model_dump())
+            events.append({
+                "event": "critic_verdict",
+                "timestamp": datetime.now().isoformat(),
+                "attempt": attempt,
+                "passed": verdict.passed,
+                "invalid_citations": verdict.invalid_citation_ids,
+                "unsupported_facts": verdict.unsupported_facts,
+            })
+            if verdict.passed:
+                break
+            if attempt < self._critic_max_retries:
+                assessment_result["critic_feedback"] = verdict.feedback_for_generator
+            else:
+                events.append({
+                    "event": "critic_fallback",
+                    "timestamp": datetime.now().isoformat(),
+                    "reason": "critic rejected rationale after max retries; using deterministic fallback",
+                })
+                decision_packet = self.decision_packager.package(
+                    {**assessment_result, "_force_fallback": True}, rating_result, workflow_steps_summary,
+                )
+        return decision_packet, verdicts, events
+
     def _run(
         self,
         submission_raw: Dict[str, Any],
@@ -301,55 +356,12 @@ class UnderwritingWorkflow:
                     retrieved_chunks = (workflow_state.retrieval or {}).get("retrieved_chunks", [])
                     facts_used = assessment_result.get("facts_used", {})
 
-                    decision_packet = None
-                    for attempt in range(self._critic_max_retries + 1):
-                        decision_packet = self.decision_packager.package(
-                            assessment_result,
-                            rating_result,
-                            workflow_steps_summary,
-                            mask_map=_mask_map,
-                        )
-
-                        # Critic verifies the LLM-generated rationale.
-                        # Pass _mask_map so the critic can scrub PII from its own prompt.
-                        verdict = self.critic_agent.verify_rationale(
-                            rationale=decision_packet.producer_rationale,
-                            retrieved_chunks=retrieved_chunks,
-                            facts_used=facts_used,
-                            attempt=attempt,
-                            mask_map=_mask_map,
-                        )
-                        workflow_state.critic_verdicts.append(verdict.model_dump())
-                        workflow_state.events.append({
-                            "event": "critic_verdict",
-                            "timestamp": datetime.now().isoformat(),
-                            "attempt": attempt,
-                            "passed": verdict.passed,
-                            "invalid_citations": verdict.invalid_citation_ids,
-                            "unsupported_facts": verdict.unsupported_facts,
-                        })
-
-                        if verdict.passed:
-                            break
-
-                        if attempt < self._critic_max_retries:
-                            # Feed structured feedback to the generator on the next pass
-                            assessment_result["critic_feedback"] = verdict.feedback_for_generator
-                        else:
-                            # Exhausted retries — emit a deterministic fallback rationale
-                            workflow_state.events.append({
-                                "event": "critic_fallback",
-                                "timestamp": datetime.now().isoformat(),
-                                "reason": "critic rejected rationale after max retries; using deterministic fallback",
-                            })
-                            from app.prompt_templates import PRODUCER_RATIONALE_RETRY_SUFFIX  # noqa: F401 (import unused but documents intent)
-                            # Re-package with fallback forced by disabling LLM for this call
-                            decision_packet = self.decision_packager.package(
-                                {**assessment_result, "_force_fallback": True},
-                                rating_result,
-                                workflow_steps_summary,
-                            )
-
+                    decision_packet, _verdicts, _events = self.package_decision_with_critic(
+                        assessment_result, rating_result, workflow_steps_summary,
+                        retrieved_chunks, facts_used, _mask_map,
+                    )
+                    workflow_state.critic_verdicts.extend(_verdicts)
+                    workflow_state.events.extend(_events)
                     workflow_state.rationale_retry_count = max(0, len(workflow_state.critic_verdicts) - 1)
                     workflow_state.decision_packet = decision_packet
 

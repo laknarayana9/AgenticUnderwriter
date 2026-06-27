@@ -12,4 +12,6 @@ storage/chroma_db/
 storage/knowledge_base/
 evals/reports/
 finetune/data/
+storage/*.sqlite
+storage/*.sqlite-*
 .DS_Store

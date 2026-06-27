@@ -57,6 +57,8 @@ Let the LLM plan the workflow — choosing which tools to call, when to retrieve
 - Audit logs of LLM-driven orchestration ("the agent decided to retrieve again") are harder to reason about than deterministic state-machine transitions.
 - This is the most common reason "agent-style" systems struggle in regulated environments. The right pattern for a well-bounded workflow is an explicit state machine with the LLM as a tool, not a planner.
 
+> The project later added a **LangGraph engine** (`workflows/langgraph_workflow.py`, see `docs/orchestration.md`). This does **not** reopen this alternative: it is an *explicit* `StateGraph` with fixed edges — the LLM is still not the planner. LangGraph is used as the explicit-graph runtime (and for durable checkpointed pause/resume), not as an autonomous agent. Decisions remain rules-owned and identical to the native engine.
+
 ### Alternative 3: LLM-only with prompt-based "rules"
 
 Encode the rules in the prompt and rely on the model to apply them.
@@ -123,7 +125,8 @@ If we add a line where the rules genuinely cannot be enumerated (e.g., specialty
 - `app/llm_service.py` — bounded LLM service with Pydantic schemas and fallback
 - `app/pii_masker.py` — PII masking applied before every LLM prompt
 - `app/vision_service.py` and `docs/vision_intake.md` — fenced vision evidence intake (upstream of the rules, confidence-gated, guarded by the missing-info gate)
-- `workflows/agent_workflow.py` — multi-stage pipeline orchestration
+- `workflows/agent_workflow.py` — multi-stage pipeline orchestration (native engine)
+- `workflows/langgraph_workflow.py` and `docs/orchestration.md` — alternative LangGraph engine (explicit StateGraph, durable HITL); identical decisions, rules still own them
 - `workflows/agents.py` — stage handlers (deterministic; "Agent" is a role label, not an LLM driver)
 - `workflows/critic.py` — generator–critic loop for rationale faithfulness (separate critic model)
 - `finetune/` and `docs/finetuning.md` — optional fine-tuned intake-extraction front-end (upstream of the rules, guarded by the missing-info gate)
