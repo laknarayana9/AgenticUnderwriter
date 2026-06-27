@@ -16,7 +16,7 @@ rank_bm25>=0.2.2
 
 # Orchestration: optional LangGraph engine (alternative to the native state
 # machine), with a durable SQLite checkpointer for human-in-the-loop pause/resume.
-# Selected with WORKFLOW_ENGINE=langgraph; the native engine remains the default.
+# Reached via the /quote/ho3/langgraph endpoints; the native engine is the default.
 langgraph>=1.0.0
 langgraph-checkpoint-sqlite>=2.0.0
 langchain-openai>=1.0.0
