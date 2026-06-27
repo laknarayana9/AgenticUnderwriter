@@ -12,19 +12,7 @@ import base64
 import json
 from typing import Any, Dict, Optional
 
-from app.vision_service import VISION_ATTRIBUTES, VisionUnavailable
-
-
-def _user_instruction() -> str:
-    keys = ", ".join(VISION_ATTRIBUTES)
-    return (
-        "Assess this property photo for underwriting. Return a JSON object with "
-        f"exactly these keys: {keys}. Each value is an object "
-        '{"value": <bool|string|list|null>, "confidence": <0..1>, "visible": <bool>}. '
-        "Set visible=false and value=null for anything you cannot assess from the "
-        "image. hazards.value is a list of detected hazards "
-        "(pool, trampoline, overhanging_trees, ...) or []. JSON only."
-    )
+from app.vision_service import VisionUnavailable, vision_user_instruction
 
 
 class OpenAIVisionProvider:
@@ -54,7 +42,7 @@ class OpenAIVisionProvider:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": _user_instruction()},
+                        {"type": "text", "text": vision_user_instruction()},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                     ],
                 },
