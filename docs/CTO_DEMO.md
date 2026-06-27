@@ -12,7 +12,7 @@ cp .env.example .env                   # fill in OPENAI_API_KEY (and optionally 
 
 ## 1. Unit + Product Test Suite (CI gate)
 
-*Shows: 113 passing product tests, fully deterministic, no LLM calls needed.*
+*Shows: 116 passing product tests, fully deterministic, no LLM calls needed.*
 
 ```bash
 pytest tests/ -q
@@ -20,7 +20,7 @@ pytest tests/ -q
 
 **Expected output:**
 ```
-113 passed in Xs
+116 passed in Xs
 ```
 
 ---
@@ -251,12 +251,20 @@ python3 scripts/vision_workflow_demo.py --demo-contrast
 - Run 1 (no photo): `waiting_for_info` because roof age is unknown
 - Run 2 (photo provided): vision evidence fills in roof condition → workflow proceeds to decision
 
-**With a real photo and `OPENAI_API_KEY` set:**
+**With a real photo — cloud (OpenAI GPT-4o):**
 ```bash
+# Requires OPENAI_API_KEY + VISION_PROVIDER=openai (default)
 python3 scripts/vision_workflow_demo.py --image /path/to/property_photo.jpg
 ```
 
-**Look for:** `vision_evidence_applied` event in the audit trail, extracted attributes (roof condition, stories, construction type) folded into the submission before the rules run.
+**With a real photo — fully local / on-device (Ollama, no egress, no API key):**
+```bash
+# Requires Ollama running locally with llama3.2-vision pulled
+ollama pull llama3.2-vision
+VISION_PROVIDER=ollama python3 scripts/vision_workflow_demo.py --image /path/to/property_photo.jpg
+```
+
+**Look for:** `vision_evidence_applied` event in the audit trail, extracted attributes (roof condition, stories, construction type) folded into the submission before the rules run. The Ollama path keeps property photos fully on-device — the privacy-preserving option for sensitive PII.
 
 **API endpoint (multipart):**
 ```bash
@@ -335,7 +343,7 @@ Open `http://localhost:8501` in a browser.
 
 | # | Feature | Proof point |
 |---|---------|-------------|
-| 1 | Test suite | 113 passing product tests, CI-ready |
+| 1 | Test suite | 116 passing product tests, CI-ready |
 | 2 | Core workflow | 7-agent pipeline → cited ACCEPT/REFER/DECLINE |
 | 3 | Missing-info loop | Pause → resume on same run ID with audit |
 | 4 | HITL review queue | High-risk cases routed to human review |
@@ -343,7 +351,7 @@ Open `http://localhost:8501` in a browser.
 | 6 | Retrieval | BM25 + RRF hybrid + cross-encoder reranking |
 | 7 | CI eval harness | 206-case golden set, gated thresholds |
 | 8 | LangSmith | Tracing, versioned dataset, registered evaluators, comparison view |
-| 9 | Vision intake | Property photo → GPT-4o → submission enrichment via `/quote/ho3/with-photo` |
+| 9 | Vision intake | Property photo → GPT-4o or local Ollama → submission enrichment via `/quote/ho3/with-photo` |
 | 10 | LLM-as-judge | Critic calibrated against human labels, Cohen's kappa, fail-open rate |
 | 11 | Fine-tuning | LoRA extraction pipeline on Nebius Token Factory |
 | 12 | Streamlit UI | End-to-end interactive demo |
