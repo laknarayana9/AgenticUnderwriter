@@ -620,6 +620,28 @@ rate, citation coverage, LLM usage, and cost) are recorded per run and served at
 them when configured, and is a graceful no-op otherwise so CI stays hermetic.
 See `docs/observability.md`.
 
+## Security & data governance
+
+This is a **portfolio demo, not a production deployment**, and the honest gap list
+matters for a regulated domain. Full detail in
+[docs/security_governance.md](docs/security_governance.md); the short version:
+
+**Implemented:** PII masking before any model egress (`app/pii_masker.py`); a
+fully **local inference** option (Ollama, text + vision) with zero external
+egress; SHA-only image storage (raw photos not persisted); deterministic, cited,
+versioned-ruleset decisions with a full audit trail; Pydantic input validation;
+rate limiting; secrets via env/Modal Secrets.
+
+**Deliberately out of scope (designed, not built) — and the first work for a real
+deployment:** **authentication/authorization** (the API is currently
+unauthenticated — the biggest gap), **encryption at rest + PII retention /
+right-to-erasure**, tamper-evident audit + access logs, and distributed rate
+limiting once scaled past one container.
+
+**Threat posture:** because the LLM is out of the decision path (ADR-0001),
+**prompt injection cannot change a decision**; hallucinated citations are caught
+deterministically; and the local vision provider closes the photo-PII egress gap.
+
 ## Production Hardening Roadmap
 
 The next production hardening steps are clear and modular: connect external
