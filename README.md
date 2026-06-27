@@ -3,9 +3,24 @@
 A governed agentic workflow that turns a homeowner-insurance application into a
 cited `ACCEPT` / `REFER` / `DECLINE` decision, with human-in-the-loop review.
 
-**Portfolio proof points:** CI-gated evals across 206 stratified cases with 100%
-decision accuracy, 100% reason-code match, 100% retrieval recall@5, 100% citation
-faithfulness, and 116 passing product tests.
+**What the evals actually show (stated honestly — the distinction matters):**
+
+- **Contract / regression checks — 100% *by construction*, not a quality claim.**
+  Decision accuracy, reason-code match, and citation faithfulness are 100% across
+  206 stratified cases, but the decision labels are derived from the *same*
+  governed ruleset. So these prove the implementation matches its spec and never
+  silently regresses — they do **not** prove an AI is "smart." Treat them as a
+  regression gate, not a model-quality metric.
+- **Measured quality — retrieval.** Upgrading retrieval lifted recall@1 from
+  **0.42 (lexical) → 0.61 (BM25)**, a cross-encoder reranker lifted recall@3 to
+  **0.97**, and a real embedding model lifts semantic recall@1 to **0.67**
+  (`docs/retrieval_eval.md`). These are measured against hand-authored gold
+  citations — a genuine signal that can move.
+- **Non-circular AI check.** An LLM-as-judge calibration harness
+  (`docs/judge_calibration.md`) scores the stochastic rationale critic against
+  human labels (agreement / false-negative rate) — the one metric here that can
+  actually be wrong.
+- 126 passing product tests (deterministic core + plumbing).
 
 This repo demonstrates a compact quote-to-underwrite workflow for homeowners
 submissions, including HO3 homeowners policies. It is built to show the product
@@ -197,27 +212,35 @@ python -m evals.generate_dataset
 python -m evals.run --dataset evals/datasets/ho3_labeled.jsonl
 ```
 
-The eval dataset contains 196 stratified HO3 submissions with expected
+The eval dataset contains 206 stratified HO3 submissions with expected
 decisions, reason codes, workflow statuses, and gold citation chunk IDs. The
 runner reports decision accuracy, reason-code exact match, retrieval recall@k,
 citation faithfulness, and optional rationale quality.
 
-Current CI-gated metrics:
+Current CI-gated metrics — note the **kind** of each, because it changes how much
+the number means:
 
-| Metric | Value |
-| --- | ---: |
-| Labeled cases | 196 |
-| Strata | 12 |
-| Decision accuracy | 100% |
-| Reason-code match | 100% |
-| Retrieval recall@5 | 100% |
-| Faithfulness | 100% |
-| Product tests | 99 passing |
+| Metric | Value | Kind |
+| --- | ---: | --- |
+| Labeled cases | 206 | — |
+| Decision accuracy | 100% | contract check — labels come from the same ruleset, so this is *true by construction* (a regression gate, not a quality metric) |
+| Reason-code match | 100% | contract check (by construction) |
+| Citation faithfulness | 100% | contract check — deterministic groundedness (below) |
+| Retrieval recall@1 (BM25) | 0.61 | **measured quality** (vs 0.42 lexical baseline) |
+| Retrieval recall@3 (hybrid + rerank) | 0.97 | **measured quality** |
+| Product tests | 126 passing | — |
+
+The deterministic checks (decision / reason-code / faithfulness) are **regression
+gates**: they guarantee the implementation matches the governed spec and never
+silently drifts. They are 100% *by construction* and are **not** evidence that the
+AI layer is accurate. For that, see the retrieval numbers above (which can move)
+and the LLM-as-judge calibration below (the genuinely non-circular check).
 
 Faithfulness is a deterministic groundedness check: it verifies the decision
 packet only cites chunks that were actually retrieved this run and only asserts
 supporting facts the rules actually produced. It catches fabricated citations or
-facts when the optional LLM wording path is enabled.
+facts when the optional LLM wording path is enabled — but because it compares the
+run against itself, it too is a contract check, not an external quality measure.
 
 ### LLM-as-judge calibrated against human labels
 
