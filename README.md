@@ -3,6 +3,10 @@
 A governed agentic workflow that turns a homeowner-insurance application into a
 cited `ACCEPT` / `REFER` / `DECLINE` decision, with human-in-the-loop review.
 
+> Portfolio project on **synthetic** carrier guidelines and generated data — built
+> to demonstrate architecture and judgment, not a production deployment. See
+> [Security & data governance](docs/security_governance.md) for the demo-vs-production boundary.
+
 **What the evals actually show (stated honestly — the distinction matters):**
 
 - **Contract / regression checks — 100% *by construction*, not a quality claim.**
@@ -593,16 +597,26 @@ tests also use curated scenarios in `tests/demo_scenarios.py`, including:
 
 ## Test Scope
 
-The default pytest suite runs maintained product tests only:
+126 product tests run by default (`python -m pytest`). They are **not all equal in
+value**, and it's worth being explicit about which is which:
 
-```bash
-python -m pytest
-```
+**High-value — would catch a real regression.** The deterministic core:
+underwriting rule triggers and severity precedence, decision/reason-code
+contracts, missing-info pause/resume, review-queue actions, retrieval behavior
+(lexical / BM25 / hybrid / rerank) and recall against the gold set, rating sanity,
+the generator–critic loop, and **dual-engine decision parity across all 206 eval
+cases**. These exercise real logic with real assertions.
 
-These tests cover quote contracts, missing-info resume, review queue actions,
-explicit rule triggers, lexical and semantic RAG behavior, fallback retrieval,
-eval harness behavior, rating sanity checks, and end-to-end underwriting
-scenarios.
+**Plumbing — passes by construction.** The LLM-, vision-, and fine-tune-facing
+tests drive **fake/stub providers**, so they verify wiring, schema validation,
+abstention, confidence gating, and graceful degradation — *not* that a real model
+is accurate. That accuracy is what the eval harnesses (`evals/`) and the LLM-judge
+calibration measure, and what an end-to-end run with a real provider establishes.
+
+The split is deliberate: the governed decision path is genuinely tested; the model
+surfaces are tested for **integration safety**, with quality deferred to the eval
+harnesses. So "126 passing" means the system is wired correctly and the decision
+core is sound — it is not a claim that the model layer is accurate.
 
 ## Traceability
 
