@@ -12,7 +12,7 @@ cp .env.example .env                   # fill in OPENAI_API_KEY (and optionally 
 
 ## 1. Unit + Product Test Suite (CI gate)
 
-*Shows: 116 passing product tests, fully deterministic, no LLM calls needed.*
+*Shows: 126 passing product tests, fully deterministic, no LLM calls needed.*
 
 ```bash
 pytest tests/ -q
@@ -20,7 +20,7 @@ pytest tests/ -q
 
 **Expected output:**
 ```
-116 passed in Xs
+126 passed in Xs
 ```
 
 ---
@@ -307,7 +307,95 @@ python3 evals/judge_calibration.py \
 
 ---
 
-## 11. Fine-Tune Track (Nebius Token Factory)
+## 11. Dual-Engine Orchestration — Native vs LangGraph
+
+*Shows: the same governed workflow running on two interchangeable orchestration engines. LangGraph adds durable pause/resume (survives process restart) via a SQLite checkpointer. Decision parity is CI-asserted across all 206 golden cases.*
+
+**Run both engines on the same submission and compare:**
+
+```bash
+# Native engine (default)
+curl -s -X POST http://localhost:8000/quote/ho3 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submission": {
+      "applicant": {"full_name": "Alex Kim", "email": "alex@example.com", "phone": "+1-555-100-0001"},
+      "risk": {
+        "property_address": "100 Pine St, Palo Alto, CA 94301",
+        "occupancy": "owner_occupied_primary",
+        "dwelling_type": "single_family",
+        "year_built": 2005,
+        "roof_age_years": 3,
+        "construction_type": "frame",
+        "stories": 1
+      },
+      "coverage_request": {
+        "coverage_a": 500000, "coverage_b_pct": 10, "coverage_c_pct": 50,
+        "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
+      }
+    }
+  }' | python3 -m json.tool
+
+# LangGraph engine — same governance, different orchestrator
+curl -s -X POST http://localhost:8000/quote/ho3/langgraph \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submission": {
+      "applicant": {"full_name": "Alex Kim", "email": "alex@example.com", "phone": "+1-555-100-0001"},
+      "risk": {
+        "property_address": "100 Pine St, Palo Alto, CA 94301",
+        "occupancy": "owner_occupied_primary",
+        "dwelling_type": "single_family",
+        "year_built": 2005,
+        "roof_age_years": 3,
+        "construction_type": "frame",
+        "stories": 1
+      },
+      "coverage_request": {
+        "coverage_a": 500000, "coverage_b_pct": 10, "coverage_c_pct": 50,
+        "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
+      }
+    }
+  }' | python3 -m json.tool
+```
+
+**Look for:** identical `decision`, `reason_codes`, and `citations` from both engines — parity is enforced by the deterministic rules layer regardless of orchestrator.
+
+**LangGraph durable pause/resume (survives process restart):**
+
+```bash
+# Step 1 — submit with missing roof age; note the thread_id in the response
+curl -s -X POST http://localhost:8000/quote/ho3/langgraph \
+  -H "Content-Type: application/json" \
+  -d '{
+    "submission": {
+      "applicant": {"full_name": "Sam Lee", "email": "sam@example.com", "phone": "+1-555-200-0001"},
+      "risk": {
+        "property_address": "200 Elm St, San Jose, CA 95101",
+        "occupancy": "owner_occupied_primary",
+        "dwelling_type": "single_family",
+        "year_built": 1998,
+        "construction_type": "frame",
+        "stories": 2
+      },
+      "coverage_request": {
+        "coverage_a": 450000, "coverage_b_pct": 10, "coverage_c_pct": 50,
+        "coverage_d_pct": 20, "coverage_e": 300000, "coverage_f": 5000, "deductible": 1000
+      }
+    }
+  }' | python3 -m json.tool
+
+# Step 2 — resume using the thread_id (durable: works even after server restart)
+curl -s -X POST http://localhost:8000/quote/ho3/langgraph/<THREAD_ID>/resume \
+  -H "Content-Type: application/json" \
+  -d '{"answers": {"roof_age_years": 5}}' | python3 -m json.tool
+```
+
+**Look for:** `"interrupted": true` and a `thread_id` in Step 1; completed decision in Step 2. Unlike the native engine's in-memory resume, this state persists to SQLite so the run survives a server restart.
+
+---
+
+## 12. Fine-Tune Track (Nebius Token Factory)
 
 *Shows: LoRA extraction workflow generating training data and submitting a fine-tune job.*
 
@@ -320,7 +408,7 @@ python3 scripts/extraction_workflow_demo.py
 
 ---
 
-## 12. Streamlit Interactive Demo
+## 13. Streamlit Interactive Demo
 
 *Shows: full UI — edit a submission, run the workflow, view citations and audit trail.*
 
@@ -343,7 +431,7 @@ Open `http://localhost:8501` in a browser.
 
 | # | Feature | Proof point |
 |---|---------|-------------|
-| 1 | Test suite | 116 passing product tests, CI-ready |
+| 1 | Test suite | 126 passing product tests, CI-ready |
 | 2 | Core workflow | 7-agent pipeline → cited ACCEPT/REFER/DECLINE |
 | 3 | Missing-info loop | Pause → resume on same run ID with audit |
 | 4 | HITL review queue | High-risk cases routed to human review |
@@ -353,5 +441,6 @@ Open `http://localhost:8501` in a browser.
 | 8 | LangSmith | Tracing, versioned dataset, registered evaluators, comparison view |
 | 9 | Vision intake | Property photo → GPT-4o or local Ollama → submission enrichment via `/quote/ho3/with-photo` |
 | 10 | LLM-as-judge | Critic calibrated against human labels, Cohen's kappa, fail-open rate |
-| 11 | Fine-tuning | LoRA extraction pipeline on Nebius Token Factory |
-| 12 | Streamlit UI | End-to-end interactive demo |
+| 11 | Dual-engine orchestration | Native + LangGraph engines, durable SQLite pause/resume, 206-case parity |
+| 12 | Fine-tuning | LoRA extraction pipeline on Nebius Token Factory |
+| 13 | Streamlit UI | End-to-end interactive demo |
