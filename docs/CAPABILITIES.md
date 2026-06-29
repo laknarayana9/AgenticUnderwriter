@@ -170,6 +170,18 @@ A governed agentic workflow that turns a homeowners insurance application into a
 
 ---
 
+### 15. MCP Server — Read-Only Observation Surface
+
+**What it does:** A standards-compliant Model Context Protocol server (`mcp_server/`, `python -m mcp_server`, stdio) that lets an external agent observe the system — `list_runs`, `get_run`, `get_decision`, `get_audit_trail`, `list_pending_reviews`, `get_latency_budget`, `get_metrics`, `get_anomalies` — plus `ruleset://` and `guideline://` resources.
+
+**Real:** Real FastMCP server over the same DB the API uses. Metrics/anomalies are reconstructed from persisted run records so they're correct from a separate process. PII is masked by default via the same `PIIMasker`.
+
+**Mock:** None — but it is deliberately **read-only**. There are zero decision-mutating tools; a guardrail test asserts the registered tool set contains no mutating verb.
+
+**Why this matters in an interview:** "MCP usually lets an agent *act*. Here the architecture keeps the LLM/agent out of the decision path, so the MCP surface is scoped to observation — an external agent can audit, explain, and monitor the governed system, but cannot drive it. The read-only guarantee is enforced in code and asserted in CI."
+
+---
+
 ## What to Say in 3 Minutes
 
 **"The architecture has one hard rule — the underwriting decision comes from deterministic Python code, not an LLM. The LLM has three allowed roles: wording follow-up questions, generating a producer rationale, and grading that rationale as a critic. Those boundaries are tested, documented in ADR-0001, and enforced at the code level."**
@@ -201,5 +213,6 @@ A governed agentic workflow that turns a homeowners insurance application into a
 | LangGraph dual-engine | ✅ Full | SQLite instead of Postgres | Single-instance demo |
 | LLM-as-judge calibration | ✅ Full | Simulated backend default | Reproducible CI, cost control |
 | Fine-tune pipeline | ✅ Full | Dry-run without key | No trained model served |
+| MCP server (read-only) | ✅ Full | — | Read-only by design; no mutating tools |
 | Multi-provider LLM | ✅ Full | Some untested without keys | — |
 | Premium rating | Interface ✅ | Magic constants | Actuarial rates are proprietary |
